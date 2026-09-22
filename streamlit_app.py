@@ -23,6 +23,31 @@ MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
 
 
 # ============================================================
+# CONSTANTES
+# ============================================================
+# GIF transparente 1x1 — usado como avatar vazio para nao renderizar emoji.
+_BLANK_AVATAR = (
+    "data:image/gif;base64,"
+    "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+)
+
+# System prompt: instrui o modelo a nao usar emojis e seguir contrato de tags.
+SYSTEM_PROMPT = """You are Aether Engine, a professional technical assistant.
+
+Strict rules:
+1. Never use emojis or emoticons in your responses.
+2. Be concise, technical, and direct. No filler, no friendly slang.
+3. Respond in the same language the user writes in. If the user writes in
+   Portuguese, respond in formal Brazilian Portuguese.
+4. When the user requests a UI component, visual, animation, or HTML/CSS/JS/SVG
+   output, wrap the complete code inside <artifact>...</artifact> tags.
+   The content must be a full standalone HTML document (with <!DOCTYPE html>).
+5. Do not add commentary about the artifact outside the tags beyond a one-line
+   summary.
+"""
+
+
+# ============================================================
 # PAGE CONFIG
 # ============================================================
 _FAVICON = (
@@ -43,8 +68,6 @@ st.set_page_config(
 
 # ============================================================
 # CSS — PALETA E ESTETICA CLAUDE
-# Esconde o Streamlit, aplica paleta off-white, tipografia serif,
-# animacoes suaves, barra de pensamento discreta, cursor de digitacao.
 # ============================================================
 st.markdown("""
 <style>
@@ -147,16 +170,24 @@ st.markdown("""
         border: 1px solid var(--border-soft) !important;
     }
 
-    [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) {
-        padding-left: 0 !important;
-    }
-
+    /* ---------- AVATAR SUPPRESSION (hardened) ---------- */
+    [data-testid="stChatMessage"] > div > img,
+    [data-testid="stChatMessage"] > img,
+    [data-testid="stChatMessage"] img,
+    [data-testid="stChatMessage"] [data-testid*="Avatar"],
+    [data-testid="stChatMessage"] [data-testid*="avatar"],
+    [data-testid="stChatMessage"] [class*="Avatar"],
+    [data-testid="stChatMessage"] [class*="avatar"],
     [data-testid="chatAvatarIcon-user"],
     [data-testid="chatAvatarIcon-assistant"] {
         display: none !important;
-    }
-    [data-testid="stChatMessage"] > img {
-        display: none !important;
+        visibility: hidden !important;
+        width: 0 !important;
+        height: 0 !important;
+        min-width: 0 !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        opacity: 0 !important;
     }
 
     @keyframes ae-fade-up {
@@ -341,6 +372,39 @@ if "artifact_lang" not in st.session_state:
 
 
 # ============================================================
+# EMOJI SANITIZER — cinto e suspensorio para o conteudo do modelo
+# ============================================================
+_EMOJI_RE = re.compile(
+    "["
+    "\U0001F600-\U0001F64F"  # emoticons
+    "\U0001F300-\U0001F5FF"  # symbols & pictographs
+    "\U0001F680-\U0001F6FF"  # transport & map
+    "\U0001F1E0-\U0001F1FF"  # flags
+    "\U00002700-\U000027BF"  # dingbats
+    "\U0001F900-\U0001F9FF"  # supplemental
+    "\U0001FA00-\U0001FA6F"
+    "\U0001FA70-\U0001FAFF"
+    "\U00002600-\U000026FF"  # misc symbols
+    "\U0001F700-\U0001F77F"
+    "\U0000FE00-\U0000FE0F"  # variation selectors
+    "\U00002B00-\U00002BFF"
+    "\U00002190-\U000021FF"  # arrows used as decor
+    "]+",
+    flags=re.UNICODE,
+)
+
+
+def strip_emojis(text: str) -> str:
+    if not text:
+        return text
+    cleaned = _EMOJI_RE.sub("", text)
+    # Colapsa espacos duplos deixados pela remocao
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r" +\n", "\n", cleaned)
+    return cleaned
+
+
+# ============================================================
 # PARSING — thinking, artifact, sanitizacao de stream parcial
 # ============================================================
 _THINK_RE     = re.compile(r"<thinking>(.*?)</thinking>", re.DOTALL | re.IGNORECASE)
@@ -368,7 +432,6 @@ def _detect_lang(code: str) -> str:
 
 
 def extract_artifact(text: str):
-    """Retorna (texto_limpo, artifact_html_ou_None, linguagem_ou_None)."""
     m = _ARTIFACT_RE.search(text)
     if m:
         code = m.group(1).strip()
@@ -398,7 +461,7 @@ def parse_response(raw: str) -> dict:
     no_artifact, artifact, lang = extract_artifact(raw)
     visible, thinking = extract_thinking(no_artifact)
     return {
-        "text":     visible,
+        "text":     strip_emojis(visible),
         "thinking": thinking,
         "artifact": artifact,
         "lang":     lang,
@@ -461,10 +524,10 @@ with col_chat:
     # ---- Historico ----
     for msg in st.session_state.messages:
         if msg["role"] == "user":
-            with st.chat_message("user"):
+            with st.chat_message("user", avatar=_BLANK_AVATAR):
                 st.markdown(msg["content"])
         else:
-            with st.chat_message("assistant"):
+            with st.chat_message("assistant", avatar=_BLANK_AVATAR):
                 if msg.get("thinking"):
                     with st.expander("Processando raciocinio..."):
                         st.markdown(msg["thinking"])
@@ -475,10 +538,10 @@ with col_chat:
     if prompt := st.chat_input("Envie uma mensagem para o Aether Engine..."):
 
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
+        with st.chat_message("user", avatar=_BLANK_AVATAR):
             st.markdown(prompt)
 
-        with st.chat_message("assistant"):
+        with st.chat_message("assistant", avatar=_BLANK_AVATAR):
 
             thinking_slot = st.expander("Processando raciocinio...", expanded=False)
             with thinking_slot:
@@ -491,11 +554,16 @@ with col_chat:
 
             try:
                 # ============================================================
-                # API CALL — streaming
+                # API CALL — system prompt + historico
                 # ============================================================
+                api_messages = (
+                    [{"role": "system", "content": SYSTEM_PROMPT}]
+                    + st.session_state.messages
+                )
+
                 completion = client.chat.completions.create(
                     model=MODEL,
-                    messages=st.session_state.messages,
+                    messages=api_messages,
                     temperature=1,
                     top_p=0.95,
                     max_tokens=8192,
@@ -508,7 +576,6 @@ with col_chat:
                         continue
                     delta = chunk.choices[0].delta
 
-                    # Canal 1: reasoning_content nativo
                     reasoning = getattr(delta, "reasoning_content", None)
                     if reasoning:
                         reasoning_accum += reasoning
@@ -517,14 +584,13 @@ with col_chat:
                             unsafe_allow_html=True,
                         )
 
-                    # Canal 2: content principal
                     if delta.content:
                         raw_buffer += delta.content
 
-                        # Parse parcial para exibicao incremental segura
                         partial_visible, partial_think = extract_thinking(raw_buffer)
                         partial_visible, _, _ = extract_artifact(partial_visible)
                         partial_visible = _strip_dangling(partial_visible)
+                        partial_visible = strip_emojis(partial_visible)
 
                         combined = "\n\n".join(
                             filter(None, [reasoning_accum, partial_think])
@@ -553,14 +619,12 @@ with col_chat:
 
                 text_body.markdown(parsed["text"] or "_Sem resposta._")
 
-                # ---- Atualiza painel de artifact ----
                 if parsed["artifact"]:
                     st.session_state.artifact_html = parsed["artifact"]
                     st.session_state.artifact_lang = parsed["lang"]
                     with preview_slot:
                         components.html(parsed["artifact"], height=680, scrolling=True)
 
-                # ---- Persiste no historico ----
                 st.session_state.messages.append({
                     "role":     "assistant",
                     "content":  parsed["text"],
