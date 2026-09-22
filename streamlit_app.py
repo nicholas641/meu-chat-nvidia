@@ -2,7 +2,7 @@
 Aether Engine — AI workspace
 -----------------------------
 Layout: sidebar nativa + header + 2 colunas (chat | preview).
-Alturas relativas a viewport via CSS clamp(). Logica intacta.
+Streaming roda dentro do chat_box. Logica intacta.
 """
 
 import os
@@ -313,6 +313,19 @@ st.markdown("""
         background: transparent !important;
     }
 
+    /* ---------- ESCONDE HINT NATIVO DO FORM ---------- */
+    [data-testid="InputInstructions"],
+    [data-testid="stFormSubmitButton"] + small,
+    [data-testid="stTextInput"] + small,
+    [data-testid="stTextInputRootElement"] + small,
+    .stForm small {
+        display: none !important;
+        visibility: hidden !important;
+        height: 0 !important;
+        width: 0 !important;
+        opacity: 0 !important;
+    }
+
     html, body, [class*="css"], .stApp {
         font-family: 'Inter', -apple-system, BlinkMacSystemFont,
                      "Segoe UI", Roboto, sans-serif !important;
@@ -330,12 +343,7 @@ st.markdown("""
         max-width: 100% !important;
     }
 
-    /* ============================================================
-       ALTURAS RELATIVAS A VIEWPORT
-       Substitui alturas fixas dos st.container(height=N).
-       clamp(min, ideal, max) evita estouro em telas pequenas
-       e desperdicio em telas grandes.
-       ============================================================ */
+    /* ---------- ALTURAS RELATIVAS ---------- */
     [data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stVerticalBlock"]) {
         height: clamp(260px, 46vh, 560px) !important;
         max-height: 560px !important;
@@ -978,7 +986,6 @@ st.markdown("""
     }
     ::-webkit-scrollbar-thumb:hover { background: #c9c6be; }
 
-    /* ---------- RESPONSIVO ---------- */
     @media (max-width: 900px) {
         section[data-testid="stSidebar"] {
             width: 180px !important;
@@ -1068,7 +1075,7 @@ col_chat, col_preview = st.columns([1, 1.15], gap="medium")
 # ------------------------------------------------------------
 # CHAT
 # ------------------------------------------------------------
-_pending_from_render = None
+_do_rerun = False
 
 with col_chat:
 
@@ -1077,16 +1084,31 @@ with col_chat:
         unsafe_allow_html=True,
     )
 
+    # Resolve prompt pendente ANTES do loop
+    _prompt = st.session_state.pending_prompt
+    st.session_state.pending_prompt = None
+
+    if _prompt:
+        if st.session_state.attached_text:
+            _prompt = (
+                f"{_prompt}\n\n"
+                f"[Arquivo anexado: {st.session_state.attached_name}]\n"
+                f"```\n{st.session_state.attached_text[:4000]}\n```"
+            )
+        st.session_state.messages.append({"role": "user", "content": _prompt})
+
     chat_box = st.container(height=420)
 
     with chat_box:
         if not st.session_state.messages:
             st.markdown(
-                '<div style="padding: 40px 20px; text-align: center; color: #999; font-size: 13px;">'
+                '<div style="padding: 40px 20px; text-align: center; '
+                'color: #999; font-size: 13px;">'
                 'Envie uma mensagem para comecar uma nova conversa.'
                 '</div>',
                 unsafe_allow_html=True,
             )
+
         for msg in st.session_state.messages:
             if msg["role"] == "user":
                 with st.chat_message("user", avatar=_AVATAR_USER):
@@ -1098,6 +1120,104 @@ with col_chat:
                             st.markdown(msg["thinking"])
                     if msg.get("content"):
                         st.markdown(msg["content"])
+
+        # Streaming dentro do chat_box
+        if _prompt:
+            with st.chat_message("assistant", avatar=_AVATAR_AI):
+
+                thinking_slot = st.expander("Processando raciocinio", expanded=False)
+                with thinking_slot:
+                    thinking_body = st.empty()
+
+                text_body = st.empty()
+
+                raw_buffer = ""
+                reasoning_accum = ""
+
+                try:
+                    api_messages = (
+                        [{"role": "system", "content": SYSTEM_PROMPT}]
+                        + st.session_state.messages
+                    )
+
+                    completion = client.chat.completions.create(
+                        model=MODEL,
+                        messages=api_messages,
+                        temperature=st.session_state.temperature,
+                        top_p=st.session_state.top_p,
+                        max_tokens=st.session_state.max_tokens,
+                        extra_body={"chat_template_kwargs": {"enable_thinking": True}},
+                        stream=True,
+                    )
+
+                    for chunk in completion:
+                        if not chunk.choices:
+                            continue
+                        delta = chunk.choices[0].delta
+
+                        reasoning = getattr(delta, "reasoning_content", None)
+                        if reasoning:
+                            reasoning_accum += reasoning
+                            thinking_body.markdown(
+                                reasoning_accum + '<span class="cursor"></span>',
+                                unsafe_allow_html=True,
+                            )
+
+                        if delta.content:
+                            raw_buffer += delta.content
+
+                            partial_visible, partial_think = extract_thinking(raw_buffer)
+                            partial_visible, _, _ = extract_artifact(partial_visible)
+                            partial_visible = _strip_dangling(partial_visible)
+                            partial_visible = strip_emojis(partial_visible)
+
+                            combined = "\n\n".join(
+                                filter(None, [reasoning_accum, partial_think])
+                            )
+                            if combined:
+                                thinking_body.markdown(
+                                    combined + '<span class="cursor"></span>',
+                                    unsafe_allow_html=True,
+                                )
+                            if partial_visible:
+                                text_body.markdown(
+                                    partial_visible + '<span class="cursor"></span>',
+                                    unsafe_allow_html=True,
+                                )
+
+                    parsed = parse_response(raw_buffer)
+                    final_thinking = "\n\n".join(
+                        filter(None, [reasoning_accum, parsed["thinking"]])
+                    )
+
+                    if final_thinking:
+                        thinking_body.markdown(final_thinking)
+                    else:
+                        thinking_body.markdown("_Sem raciocinio exposto._")
+
+                    text_body.markdown(parsed["text"] or "_Sem resposta._")
+
+                    if parsed["artifact"]:
+                        st.session_state.current_artifact = parsed["artifact"]
+                        st.session_state.artifact_lang = parsed["lang"]
+
+                    st.session_state.messages.append({
+                        "role":     "assistant",
+                        "content":  parsed["text"],
+                        "thinking": final_thinking,
+                    })
+
+                except Exception as e:
+                    st.error(f"Falha ao processar resposta: {e}")
+                    st.session_state.messages.append({
+                        "role":     "assistant",
+                        "content":  f"Erro: {e}",
+                        "thinking": "",
+                    })
+
+            st.session_state.attached_name = None
+            st.session_state.attached_text = None
+            _do_rerun = True
 
     if st.session_state.attached_name:
         st.markdown(
@@ -1147,7 +1267,8 @@ with col_chat:
             submitted = st.form_submit_button("Enviar")
 
     if submitted and user_msg.strip():
-        _pending_from_render = user_msg.strip()
+        st.session_state.pending_prompt = user_msg.strip()
+        st.rerun()
 
 
 # ------------------------------------------------------------
@@ -1189,118 +1310,7 @@ with col_preview:
 
 
 # ============================================================
-# PROCESSAR PROMPT PENDENTE
+# RERUN (fora de qualquer container)
 # ============================================================
-_prompt = st.session_state.pending_prompt or _pending_from_render
-if _prompt:
-    st.session_state.pending_prompt = None
-
-    if st.session_state.attached_text:
-        _prompt = (
-            f"{_prompt}\n\n"
-            f"[Arquivo anexado: {st.session_state.attached_name}]\n"
-            f"```\n{st.session_state.attached_text[:4000]}\n```"
-        )
-
-    st.session_state.messages.append({"role": "user", "content": _prompt})
-
-    with col_chat:
-        with st.chat_message("user", avatar=_AVATAR_USER):
-            st.markdown(_prompt)
-
-        with st.chat_message("assistant", avatar=_AVATAR_AI):
-
-            thinking_slot = st.expander("Processando raciocinio", expanded=False)
-            with thinking_slot:
-                thinking_body = st.empty()
-
-            text_body = st.empty()
-
-            raw_buffer = ""
-            reasoning_accum = ""
-
-            try:
-                api_messages = (
-                    [{"role": "system", "content": SYSTEM_PROMPT}]
-                    + st.session_state.messages
-                )
-
-                completion = client.chat.completions.create(
-                    model=MODEL,
-                    messages=api_messages,
-                    temperature=st.session_state.temperature,
-                    top_p=st.session_state.top_p,
-                    max_tokens=st.session_state.max_tokens,
-                    extra_body={"chat_template_kwargs": {"enable_thinking": True}},
-                    stream=True,
-                )
-
-                for chunk in completion:
-                    if not chunk.choices:
-                        continue
-                    delta = chunk.choices[0].delta
-
-                    reasoning = getattr(delta, "reasoning_content", None)
-                    if reasoning:
-                        reasoning_accum += reasoning
-                        thinking_body.markdown(
-                            reasoning_accum + '<span class="cursor"></span>',
-                            unsafe_allow_html=True,
-                        )
-
-                    if delta.content:
-                        raw_buffer += delta.content
-
-                        partial_visible, partial_think = extract_thinking(raw_buffer)
-                        partial_visible, _, _ = extract_artifact(partial_visible)
-                        partial_visible = _strip_dangling(partial_visible)
-                        partial_visible = strip_emojis(partial_visible)
-
-                        combined = "\n\n".join(
-                            filter(None, [reasoning_accum, partial_think])
-                        )
-                        if combined:
-                            thinking_body.markdown(
-                                combined + '<span class="cursor"></span>',
-                                unsafe_allow_html=True,
-                            )
-                        if partial_visible:
-                            text_body.markdown(
-                                partial_visible + '<span class="cursor"></span>',
-                                unsafe_allow_html=True,
-                            )
-
-                parsed = parse_response(raw_buffer)
-                final_thinking = "\n\n".join(
-                    filter(None, [reasoning_accum, parsed["thinking"]])
-                )
-
-                if final_thinking:
-                    thinking_body.markdown(final_thinking)
-                else:
-                    thinking_body.markdown("_Sem raciocinio exposto._")
-
-                text_body.markdown(parsed["text"] or "_Sem resposta._")
-
-                if parsed["artifact"]:
-                    st.session_state.current_artifact = parsed["artifact"]
-                    st.session_state.artifact_lang = parsed["lang"]
-
-                st.session_state.messages.append({
-                    "role":     "assistant",
-                    "content":  parsed["text"],
-                    "thinking": final_thinking,
-                })
-
-            except Exception as e:
-                st.error(f"Falha ao processar resposta: {e}")
-                st.session_state.messages.append({
-                    "role":     "assistant",
-                    "content":  f"Erro: {e}",
-                    "thinking": "",
-                })
-
-    st.session_state.attached_name = None
-    st.session_state.attached_text = None
-
+if _do_rerun:
     st.rerun()
