@@ -1,8 +1,8 @@
 """
-Aether Engine — workspace conversacional
------------------------------------------
-Tema light forcado (imune ao dark mode do navegador).
-Botoes funcionais via query params. Preview via current_artifact.
+Aether Engine — AI workspace
+-----------------------------
+Layout: sidebar nativa + header + 2 colunas (chat | preview).
+Apenas UI/UX reformulada. Logica de API, parsing e streaming intactas.
 """
 
 import os
@@ -40,7 +40,7 @@ MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
 
 
 # ============================================================
-# AVATARES INVISIVEIS
+# AVATARES INVISIVEIS (para targeting CSS)
 # ============================================================
 _SVG_USER = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" '
@@ -60,21 +60,19 @@ _AVATAR_AI   = "data:image/svg+xml;charset=utf-8," + urllib.parse.quote(_SVG_AI)
 def _svg(path: str, size: int = 18) -> str:
     return (
         f'<svg width="{size}" height="{size}" viewBox="0 0 24 24" '
-        'fill="none" stroke="currentColor" stroke-width="1.7" '
+        'fill="none" stroke="currentColor" stroke-width="1.8" '
         'stroke-linecap="round" stroke-linejoin="round">'
         f'{path}</svg>'
     )
 
-ICON_SPARK   = _svg('<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.9 2.6L22.5 18.5l-2.6.9L19 22l-.9-2.6L15.5 18.5l2.6-.9z"/>', 16)
-ICON_PLUS    = _svg('<path d="M12 5v14M5 12h14"/>', 18)
-ICON_FOLDER  = _svg('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>', 18)
-ICON_GEAR    = _svg('<circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>', 18)
-ICON_USER    = _svg('<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>', 18)
-ICON_CLIP    = _svg('<path d="M21.4 11l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/>', 18)
-ICON_MIC     = _svg('<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3"/>', 18)
+ICON_PLUS    = _svg('<path d="M12 5v14M5 12h14"/>', 16)
+ICON_FOLDER  = _svg('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>', 16)
+ICON_HISTORY = _svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>', 16)
+ICON_GEAR    = _svg('<circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>', 16)
 ICON_REFRESH = _svg('<path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/>', 15)
-ICON_FULL    = _svg('<path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>', 15)
-ICON_IMAGE   = _svg('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/>', 48)
+ICON_IMAGE   = _svg('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/>', 44)
+ICON_MIC     = _svg('<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3"/>', 18)
+ICON_TRASH   = _svg('<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>', 16)
 
 
 # ============================================================
@@ -109,7 +107,7 @@ st.set_page_config(
     page_title="Aether Engine",
     page_icon=_FAVICON,
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 
@@ -118,10 +116,9 @@ st.set_page_config(
 # ============================================================
 _DEFAULTS = {
     "messages":         [],
-    "current_artifact": None,       # <-- renomeado
+    "current_artifact": None,
     "artifact_lang":    None,
     "pending_prompt":   None,
-    "fullscreen":       False,
     "temperature":      1.0,
     "top_p":            0.95,
     "max_tokens":       8192,
@@ -147,14 +144,10 @@ if _action:
         st.toast("Nova conversa iniciada", icon="✓")
 
     elif _action == "refresh":
-        # Reatribui para forcar re-render do iframe
         _cur = st.session_state.current_artifact
         st.session_state.current_artifact = None
         st.session_state.current_artifact = _cur
         st.toast("Preview atualizado", icon="✓")
-
-    elif _action == "fullscreen":
-        st.session_state.fullscreen = not st.session_state.fullscreen
 
     elif _action == "example":
         st.session_state.pending_prompt = (
@@ -167,10 +160,18 @@ if _action:
     elif _action == "mic":
         st.toast("Gravacao de audio nao esta disponivel neste ambiente.", icon="!")
 
+    elif _action in ("projects", "history", "settings"):
+        st.toast("Modulo em desenvolvimento.", icon="!")
+
     elif _action == "clear_attach":
         st.session_state.attached_name = None
         st.session_state.attached_text = None
         st.toast("Anexo removido", icon="✓")
+
+    elif _action == "clear_chat":
+        st.session_state.messages = []
+        st.session_state.current_artifact = None
+        st.rerun()
 
 
 # ============================================================
@@ -259,199 +260,348 @@ def parse_response(raw: str) -> dict:
 # CSS
 # ============================================================
 st.markdown("""
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+""", unsafe_allow_html=True)
+
+st.markdown("""
 <style>
-    :root, html, body, [data-testid="stAppViewContainer"], .stApp {
+    /* ---------- FORCE LIGHT ---------- */
+    :root, html, body {
         color-scheme: light !important;
     }
-
-    #MainMenu, footer, [data-testid="stToolbar"],
-    [data-testid="stDecoration"], [data-testid="stStatusWidget"],
-    [data-testid="stDeployButton"], .stDeployButton,
-    [data-testid="stAppDeployButton"] { display: none !important; }
-    header[data-testid="stHeader"] { display: none !important; height: 0 !important; }
-
     :root {
-        --bg:           #fbfaf7;
-        --bg-2:         #f5f3ee;
+        --background-color: #fafaf9 !important;
+        --text-color: #1a1a1a !important;
+        --secondary-background-color: #ffffff !important;
+        --primary-color: #c96442 !important;
+    }
+
+    /* ---------- TOKENS ---------- */
+    :root {
+        --bg:           #fafaf9;
+        --card:         #ffffff;
+        --panel:        #f5f5f3;
         --bg-user:      #f0eee6;
-        --bg-code:      #f5f3ee;
-        --border:       #e5e2da;
-        --border-soft:  #efece4;
+        --bg-code:      #f5f5f3;
+        --border:       #e8e8e5;
+        --border-soft:  #f0f0ed;
         --text:         #1a1a1a;
-        --text-dim:     #5c5851;
-        --text-mute:    #9a9388;
+        --text-dim:     #666666;
+        --text-mute:    #999999;
         --accent:       #c96442;
-        --accent-dark:  #b85738;
+        --accent-hover: #b85738;
         --shadow-sm:    0 1px 2px rgba(0,0,0,.03);
         --radius-sm:    8px;
-        --radius-md:    12px;
-        --radius-pill:  999px;
+        --radius-md:    10px;
+        --radius-lg:    14px;
     }
 
-    html, body, [class*="css"] {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
-                     "Helvetica Neue", Helvetica, Arial, sans-serif;
-        color: var(--text) !important;
-        -webkit-font-smoothing: antialiased;
+    /* ---------- HIDE STREAMLIT CHROME ---------- */
+    #MainMenu { visibility: hidden; }
+    footer { display: none !important; visibility: hidden; }
+    [data-testid="stToolbar"],
+    [data-testid="stDecoration"],
+    [data-testid="stStatusWidget"],
+    [data-testid="stDeployButton"],
+    .stDeployButton,
+    [data-testid="stAppDeployButton"] { display: none !important; }
+    header[data-testid="stHeader"] {
+        display: none !important;
+        height: 0 !important;
+        background: transparent !important;
     }
+
+    /* ---------- TYPOGRAPHY ---------- */
+    html, body, [class*="css"], .stApp {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont,
+                     "Segoe UI", Roboto, sans-serif !important;
+        color: var(--text);
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+    }
+
+    /* ---------- APP BACKGROUND ---------- */
     .stApp, [data-testid="stAppViewContainer"] {
         background-color: var(--bg) !important;
     }
 
+    /* ---------- MAIN CONTAINER ---------- */
+    .block-container {
+        padding: 0.75rem 1.25rem 1rem 1.25rem !important;
+        max-width: 100% !important;
+    }
+
+    /* ============================================================
+       SIDEBAR
+       ============================================================ */
+    section[data-testid="stSidebar"] {
+        width: 220px !important;
+        min-width: 220px !important;
+        max-width: 220px !important;
+        background-color: var(--card) !important;
+        border-right: 1px solid var(--border) !important;
+    }
+    section[data-testid="stSidebar"] > div:first-child {
+        padding: 1rem 0.85rem !important;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+    }
+    section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+        gap: 0.15rem !important;
+    }
+    section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
+        width: 100%;
+    }
+    [data-testid="stSidebarCollapseButton"],
+    [data-testid="stSidebarCollapseButton"] button,
+    button[kind="header"] { display: none !important; }
+
+    /* Brand */
+    .sb-brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 4px 2px 14px 2px;
+        margin-bottom: 6px;
+        border-bottom: 1px solid var(--border-soft);
+    }
+    .sb-brand-mark {
+        width: 32px;
+        height: 32px;
+        background: var(--accent);
+        color: #ffffff;
+        border-radius: var(--radius-md);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 17px;
+        font-weight: 500;
+        flex-shrink: 0;
+        box-shadow: 0 2px 6px rgba(201,100,66,.22);
+    }
+    .sb-brand-info { display: flex; flex-direction: column; line-height: 1.15; }
+    .sb-brand-name {
+        font-size: 13.5px;
+        font-weight: 600;
+        color: var(--text);
+        letter-spacing: -0.01em;
+    }
+    .sb-brand-tag {
+        font-size: 10.5px;
+        color: var(--text-mute);
+        letter-spacing: 0.02em;
+    }
+
+    /* Sidebar section label */
+    .sb-section {
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--text-mute);
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+        padding: 14px 8px 6px 8px;
+    }
+
+    /* Sidebar buttons (as anchor tags) */
+    .sb-btn {
+        display: flex !important;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 10px;
+        margin: 1px 0;
+        border-radius: var(--radius-sm);
+        color: var(--text-dim) !important;
+        font-size: 13px;
+        font-weight: 500;
+        text-decoration: none !important;
+        transition: background-color 0.15s ease, color 0.15s ease;
+        cursor: pointer;
+        line-height: 1.2;
+    }
+    .sb-btn:hover {
+        background: var(--panel);
+        color: var(--text) !important;
+        text-decoration: none !important;
+    }
+    .sb-btn svg {
+        flex-shrink: 0;
+        opacity: 0.75;
+    }
+    .sb-btn:hover svg { opacity: 1; }
+    .sb-btn span { color: inherit; }
+
+    /* Primary sidebar button */
+    .sb-btn-primary {
+        background: var(--accent);
+        color: #ffffff !important;
+        box-shadow: 0 1px 3px rgba(201,100,66,.25);
+        margin-bottom: 4px;
+    }
+    .sb-btn-primary:hover {
+        background: var(--accent-hover);
+        color: #ffffff !important;
+    }
+    .sb-btn-primary svg { opacity: 1; }
+
+    .sb-spacer { flex: 1; min-height: 20px; }
+
+    /* ---------- GLOBAL TEXT COLORS ---------- */
     .stApp p, .stApp span, .stApp li, .stApp label, .stApp div {
         color: var(--text);
     }
 
+    /* ---------- INPUTS (dark-mode override) ---------- */
     input, textarea,
     [data-testid="stTextInput"] input,
     [data-testid="stTextArea"] textarea,
-    [data-testid="stChatInput"] textarea,
     [data-baseweb="input"] input,
     [data-baseweb="textarea"] textarea {
         color: var(--text) !important;
-        background-color: transparent !important;
+        -webkit-text-fill-color: var(--text) !important;
         caret-color: var(--accent) !important;
+        background-color: transparent !important;
     }
     input::placeholder, textarea::placeholder {
         color: var(--text-mute) !important;
+        -webkit-text-fill-color: var(--text-mute) !important;
         opacity: 1 !important;
     }
-    [data-baseweb="input"], [data-baseweb="textarea"], [data-baseweb="base-input"] {
-        background-color: transparent !important;
-        border-color: var(--border) !important;
-    }
 
-    .block-container {
-        padding: 0.6rem 1rem 0.6rem 1rem !important;
-        max-width: 100% !important;
-    }
-
-    /* ---------- TOPBAR ---------- */
-    .topbar {
-        display: flex; align-items: center; justify-content: space-between;
-        padding: 10px 18px;
-        background: #ffffff;
+    /* ============================================================
+       APP HEADER
+       ============================================================ */
+    .app-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 20px;
+        background: var(--card);
         border: 1px solid var(--border);
         border-radius: var(--radius-md);
-        box-shadow: var(--shadow-sm);
         margin-bottom: 12px;
+        box-shadow: var(--shadow-sm);
     }
-    .topbar-left { display: flex; align-items: center; gap: 14px; }
-    .topbar-brand { display: flex; align-items: center; gap: 10px; }
-    .brand-mark {
-        width: 28px; height: 28px;
-        background: var(--accent); color: #fff !important;
-        border-radius: var(--radius-sm);
-        display: flex; align-items: center; justify-content: center;
-        font-family: Georgia, serif; font-size: 15px; font-weight: 500;
-        box-shadow: 0 2px 6px rgba(201,100,66,.25);
+    .app-header-left {
+        display: flex;
+        align-items: center;
+        gap: 12px;
     }
-    .brand-name { font-size: 15px; font-weight: 600; color: var(--text) !important; }
-    .brand-tag  { font-size: 11px; color: var(--text-mute) !important; margin-top: -2px; }
-    .topbar-right { display: flex; align-items: center; gap: 6px; }
-    .status-pill {
-        display: inline-flex; align-items: center; gap: 6px;
-        padding: 5px 11px;
-        background: var(--bg-2);
+    .app-brand-mark {
+        width: 34px;
+        height: 34px;
+        background: var(--accent);
+        color: #ffffff;
+        border-radius: var(--radius-md);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 18px;
+        font-weight: 500;
+        box-shadow: 0 2px 6px rgba(201,100,66,.22);
+        flex-shrink: 0;
+    }
+    .app-brand-info { line-height: 1.15; }
+    .app-brand-name {
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--text);
+        letter-spacing: -0.015em;
+    }
+    .app-brand-tag {
+        font-size: 11.5px;
+        color: var(--text-mute);
+        letter-spacing: 0.005em;
+        margin-top: 1px;
+    }
+    .app-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 6px 12px;
+        background: var(--panel);
         border: 1px solid var(--border-soft);
-        border-radius: var(--radius-pill);
-        font-size: 11px; color: var(--text-dim) !important;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--text-dim);
+        letter-spacing: 0.01em;
     }
-    .status-dot {
-        width: 6px; height: 6px; border-radius: 50%;
+    .app-status-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
         background: #6ba944;
-        box-shadow: 0 0 0 3px rgba(107, 169, 68, 0.15);
+        box-shadow: 0 0 0 3px rgba(107,169,68,.15);
     }
 
-    /* ---------- PANEL LABEL ---------- */
+    /* ============================================================
+       PANEL LABELS
+       ============================================================ */
     .panel-label {
-        display: flex; align-items: center; justify-content: space-between;
-        padding: 8px 4px 10px 4px;
-        font-size: 11px; font-weight: 600;
-        color: var(--text-mute) !important;
-        letter-spacing: 0.08em; text-transform: uppercase;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 2px 4px 10px 4px;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-mute);
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
     }
-    .panel-label span { color: var(--text-mute) !important; }
-    .panel-label-tools { display: flex; gap: 2px; }
+    .panel-label-title { display: flex; align-items: center; gap: 8px; }
+    .panel-label-tools { display: flex; gap: 3px; }
     .panel-tool {
-        width: 26px; height: 26px;
-        display: flex; align-items: center; justify-content: center;
+        width: 28px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
         color: var(--text-mute) !important;
         border-radius: 6px;
         text-decoration: none !important;
         cursor: pointer;
-        transition: all 0.2s ease;
+        transition: background-color 0.15s ease, color 0.15s ease;
     }
     .panel-tool:hover {
-        background: var(--bg-2);
-        color: var(--text) !important;
-    }
-
-    /* ---------- RAIL ---------- */
-    .rail {
-        display: flex; flex-direction: column; align-items: center;
-        gap: 4px; padding: 12px 0;
-        background: #ffffff;
-        border: 1px solid var(--border);
-        border-radius: var(--radius-md);
-        box-shadow: var(--shadow-sm);
-    }
-    .rail-btn {
-        width: 34px; height: 34px;
-        display: flex; align-items: center; justify-content: center;
-        color: var(--text-dim) !important;
-        border-radius: var(--radius-sm);
-        cursor: pointer;
-        text-decoration: none !important;
-        transition: all 0.2s ease;
-    }
-    .rail-btn:hover {
-        background: var(--bg-2);
+        background: var(--panel);
         color: var(--accent) !important;
-        transform: translateY(-1px);
+        text-decoration: none !important;
     }
-    .rail-btn.primary {
-        background: var(--accent);
-        color: #fff !important;
-        box-shadow: 0 2px 6px rgba(201,100,66,.25);
-    }
-    .rail-btn.primary:hover {
-        background: var(--accent-dark);
-        color: #fff !important;
-    }
-    .rail-divider {
-        width: 20px; height: 1px;
-        background: var(--border-soft);
-        margin: 6px 0;
-    }
-    .rail-spacer { flex: 1; }
 
-    /* ---------- CONTAINERS ---------- */
+    /* ============================================================
+       CHAT AREA
+       ============================================================ */
     [data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stVerticalBlock"]) {
-        background: #ffffff;
+        background: var(--card) !important;
         border: 1px solid var(--border) !important;
         border-radius: var(--radius-md) !important;
         box-shadow: var(--shadow-sm);
-        padding: 6px 14px !important;
+        padding: 4px 18px !important;
     }
 
-    /* ---------- MESSAGES ---------- */
+    /* Messages base */
     [data-testid="stChatMessage"] {
         background: transparent !important;
         border: none !important;
         border-radius: 0 !important;
-        padding: 8px 0 !important;
-        margin-bottom: 4px !important;
+        padding: 6px 0 !important;
+        margin-bottom: 8px !important;
         box-shadow: none !important;
         display: flex !important;
         flex-direction: row !important;
         align-items: flex-start !important;
         gap: 0 !important;
-        animation: fadeUp 0.32s cubic-bezier(0.16, 1, 0.3, 1);
+        animation: fadeUp 0.28s cubic-bezier(0.16, 1, 0.3, 1);
     }
     [data-testid="stChatMessage"] img {
         display: none !important;
-        width: 0 !important; height: 0 !important;
+        width: 0 !important;
+        height: 0 !important;
     }
     [data-testid="stChatMessageContent"] {
         flex: 1 1 auto !important;
@@ -461,40 +611,50 @@ st.markdown("""
         border: none !important;
         border-radius: 0 !important;
     }
+
+    /* User message — bubble a direita */
     [data-testid="stChatMessage"]:has(img[src*="useravatar"]) {
-        margin: 4px 0 14px 0 !important;
+        flex-direction: row-reverse !important;
+        margin: 6px 0 12px 0 !important;
     }
     [data-testid="stChatMessage"]:has(img[src*="useravatar"]) [data-testid="stChatMessageContent"] {
         background: var(--bg-user) !important;
         border: 1px solid var(--border-soft) !important;
-        border-radius: var(--radius-md) !important;
-        padding: 11px 16px !important;
+        border-radius: var(--radius-lg) !important;
+        padding: 12px 18px !important;
         max-width: 82% !important;
         flex: 0 1 auto !important;
     }
+
+    /* Assistant message — fluxo esquerdo */
     [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) {
-        margin-bottom: 20px !important;
+        margin-bottom: 16px !important;
     }
     [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stChatMessageContent"]::before {
-        content: "Aether Engine";
+        content: "AETHER";
         display: block;
-        font-size: 11px; font-weight: 600;
-        color: var(--text-mute) !important;
-        letter-spacing: 0.04em; text-transform: uppercase;
+        font-size: 10.5px;
+        font-weight: 700;
+        color: var(--text-mute);
+        letter-spacing: 0.1em;
         margin-bottom: 8px;
     }
+
+    /* Message text */
     [data-testid="stChatMessage"] p,
     [data-testid="stChatMessage"] span,
     [data-testid="stChatMessage"] li {
         color: var(--text) !important;
-        font-size: 15px; line-height: 1.65;
+        font-size: 14.5px;
+        line-height: 1.65;
     }
+
     @keyframes fadeUp {
-        from { opacity: 0; transform: translateY(4px); }
+        from { opacity: 0; transform: translateY(3px); }
         to   { opacity: 1; transform: translateY(0); }
     }
 
-    /* ---------- CODE ---------- */
+    /* ---------- CODE BLOCKS ---------- */
     [data-testid="stChatMessage"] [data-testid="stCode"],
     [data-testid="stChatMessage"] pre {
         background: var(--bg-code) !important;
@@ -506,7 +666,8 @@ st.markdown("""
         background: transparent !important;
         color: var(--text) !important;
         font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace !important;
-        font-size: 13px !important;
+        font-size: 12.5px !important;
+        line-height: 1.6 !important;
     }
     [data-testid="stChatMessage"] p code,
     [data-testid="stChatMessage"] li code {
@@ -515,64 +676,82 @@ st.markdown("""
         padding: 2px 6px !important;
         border-radius: 4px !important;
         border: 1px solid var(--border-soft) !important;
-        font-size: 13px !important;
+        font-size: 12.5px !important;
     }
 
     /* ---------- THINKING ---------- */
     [data-testid="stChatMessage"] [data-testid="stExpander"] {
-        border: none !important; background: transparent !important;
-        margin: 0 0 8px 0 !important; padding: 0 !important;
+        border: none !important;
+        background: transparent !important;
+        margin: 0 0 8px 0 !important;
+        padding: 0 !important;
     }
     [data-testid="stChatMessage"] [data-testid="stExpander"] details {
-        border: none !important; background: transparent !important; padding: 0 !important;
+        border: none !important;
+        background: transparent !important;
+        padding: 0 !important;
     }
     [data-testid="stChatMessage"] [data-testid="stExpander"] summary {
         padding: 2px 0 !important;
         font-size: 12px !important;
         color: var(--text-mute) !important;
-        font-weight: 400 !important;
+        font-weight: 500 !important;
         background: transparent !important;
         border: none !important;
         list-style: none !important;
-        opacity: 0.75;
+        opacity: 0.8;
+        transition: opacity 0.15s ease, color 0.15s ease;
     }
     [data-testid="stChatMessage"] [data-testid="stExpander"] summary:hover {
-        opacity: 1; color: var(--text-dim) !important;
+        opacity: 1;
+        color: var(--accent) !important;
     }
     [data-testid="stChatMessage"] [data-testid="stExpander"] summary p {
-        font-size: 12px !important; color: inherit !important; display: inline !important;
+        font-size: 12px !important;
+        color: inherit !important;
+        display: inline !important;
     }
     [data-testid="stChatMessage"] [data-testid="stExpander"] summary svg {
-        width: 10px !important; height: 10px !important;
-        opacity: 0.6; margin-right: 6px;
+        width: 10px !important;
+        height: 10px !important;
+        opacity: 0.6;
+        margin-right: 6px;
     }
     [data-testid="stChatMessage"] [data-testid="stExpanderDetails"] {
-        border-left: 1px solid var(--border) !important;
+        border-left: 2px solid var(--border-soft) !important;
         padding: 6px 0 6px 14px !important;
         margin: 6px 0 10px 0 !important;
         background: transparent !important;
     }
     [data-testid="stChatMessage"] [data-testid="stExpanderDetails"] p {
-        font-size: 13px !important;
+        font-size: 12.5px !important;
         color: var(--text-dim) !important;
-        line-height: 1.65; font-style: italic;
+        line-height: 1.65;
+        font-style: italic;
+        opacity: 0.9;
     }
 
-    /* ---------- COMPOSER ---------- */
+    /* ============================================================
+       COMPOSER
+       ============================================================ */
     [data-testid="stForm"] {
-        background: #ffffff !important;
+        background: var(--card) !important;
         border: 1px solid var(--border) !important;
-        border-radius: var(--radius-md) !important;
-        padding: 8px 10px !important;
-        box-shadow: var(--shadow-sm);
-        margin-top: 8px;
+        border-radius: var(--radius-lg) !important;
+        padding: 8px 12px !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,.04);
+        margin-top: 10px;
+    }
+    [data-testid="stForm"] > div > [data-testid="stVerticalBlock"] {
+        gap: 0 !important;
     }
     [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
         align-items: center !important;
-        gap: 4px !important;
+        gap: 6px !important;
     }
     [data-testid="stForm"] [data-testid="stTextInput"] > div {
-        border: none !important; background: transparent !important;
+        border: none !important;
+        background: transparent !important;
         box-shadow: none !important;
     }
     [data-testid="stForm"] [data-testid="stTextInput"] input {
@@ -581,9 +760,9 @@ st.markdown("""
         color: var(--text) !important;
         -webkit-text-fill-color: var(--text) !important;
         caret-color: var(--accent) !important;
-        font-size: 15px !important;
-        padding: 10px 6px !important;
-        height: 42px !important;
+        font-size: 14.5px !important;
+        padding: 12px 6px !important;
+        height: 44px !important;
         box-shadow: none !important;
     }
     [data-testid="stForm"] [data-testid="stTextInput"] input::placeholder {
@@ -591,41 +770,155 @@ st.markdown("""
         -webkit-text-fill-color: var(--text-mute) !important;
         opacity: 1 !important;
     }
+
+    /* Composer popover button — SVG injected via background-image */
     [data-testid="stForm"] [data-testid="stPopover"] > button {
-        width: 38px !important; height: 38px !important;
-        min-width: 38px !important;
-        color: var(--text-mute) !important;
+        width: 40px !important;
+        height: 40px !important;
+        min-width: 40px !important;
+        padding: 0 !important;
         font-size: 0 !important;
+        color: transparent !important;
+        background-color: transparent !important;
+        border: 1px solid var(--border-soft) !important;
+        border-radius: var(--radius-sm) !important;
+        box-shadow: none !important;
+        background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%23999999' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21.4 11l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5'/%3E%3C/svg%3E") !important;
+        background-repeat: no-repeat !important;
+        background-position: center !important;
+        transition: border-color 0.15s ease, background-color 0.15s ease !important;
     }
     [data-testid="stForm"] [data-testid="stPopover"] > button:hover {
-        background: var(--bg-2) !important;
-        color: var(--accent) !important;
+        background-color: var(--panel) !important;
+        border-color: var(--accent) !important;
     }
+
+    /* Composer submit button — SVG arrow */
     [data-testid="stForm"] [data-testid="stFormSubmitButton"] button {
         background: var(--accent) !important;
         color: #ffffff !important;
         border: none !important;
         border-radius: var(--radius-sm) !important;
-        width: 42px !important; height: 42px !important;
-        min-width: 42px !important;
+        width: 44px !important;
+        height: 44px !important;
+        min-width: 44px !important;
         padding: 0 !important;
         font-size: 0 !important;
         box-shadow: 0 2px 6px rgba(201,100,66,.28) !important;
-        position: relative;
-    }
-    [data-testid="stForm"] [data-testid="stFormSubmitButton"] button::after {
-        content: "";
-        position: absolute; inset: 0;
-        background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 2L11 13M22 2l-7 20-4-9-9-4z'/%3E%3C/svg%3E");
-        background-repeat: no-repeat;
-        background-position: center;
-        pointer-events: none;
+        transition: background-color 0.15s ease, transform 0.15s ease !important;
+        background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 2L11 13M22 2l-7 20-4-9-9-4z'/%3E%3C/svg%3E") !important;
+        background-repeat: no-repeat !important;
+        background-position: center !important;
     }
     [data-testid="stForm"] [data-testid="stFormSubmitButton"] button:hover {
-        background: var(--accent-dark) !important;
+        background-color: var(--accent-hover) !important;
         transform: translateY(-1px);
     }
 
+    /* Mic link inside composer */
+    .composer-mic {
+        width: 40px !important;
+        height: 40px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        color: var(--text-mute) !important;
+        border: 1px solid var(--border-soft) !important;
+        border-radius: var(--radius-sm) !important;
+        text-decoration: none !important;
+        background: transparent;
+        transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+    }
+    .composer-mic:hover {
+        border-color: var(--accent) !important;
+        color: var(--accent) !important;
+        background: var(--panel);
+        text-decoration: none !important;
+    }
+
+    /* ---------- ATTACH CHIP ---------- */
+    .attach-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        background: var(--panel);
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius-sm);
+        font-size: 12px;
+        color: var(--text-dim) !important;
+        margin: 4px 0 6px 0;
+    }
+    .attach-chip span { color: var(--text-dim) !important; }
+    .attach-chip a {
+        color: var(--text-mute) !important;
+        text-decoration: none;
+        font-weight: 600;
+        margin-left: 4px;
+        transition: color 0.15s ease;
+    }
+    .attach-chip a:hover { color: var(--accent) !important; }
+
+    /* ============================================================
+       PREVIEW
+       ============================================================ */
+    .preview-empty {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 60px 24px;
+        min-height: 480px;
+    }
+    .preview-empty-icon {
+        width: 78px;
+        height: 78px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--panel);
+        border: 1px solid var(--border-soft);
+        border-radius: 50%;
+        color: var(--text-mute);
+        margin-bottom: 22px;
+    }
+    .preview-empty-title {
+        font-size: 15.5px;
+        font-weight: 600;
+        color: var(--text) !important;
+        margin-bottom: 8px;
+        letter-spacing: -0.01em;
+    }
+    .preview-empty-text {
+        font-size: 13px;
+        color: var(--text-mute) !important;
+        line-height: 1.6;
+        max-width: 320px;
+        margin-bottom: 20px;
+    }
+    .preview-empty-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 16px;
+        background: var(--card);
+        color: var(--text) !important;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        text-decoration: none !important;
+        transition: border-color 0.15s ease, color 0.15s ease;
+    }
+    .preview-empty-btn:hover {
+        border-color: var(--accent);
+        color: var(--accent) !important;
+        text-decoration: none !important;
+    }
+
+    /* iframe */
     iframe {
         border: 1px solid var(--border) !important;
         border-radius: var(--radius-sm) !important;
@@ -635,138 +928,171 @@ st.markdown("""
     /* ---------- CURSOR ---------- */
     .cursor {
         display: inline-block;
-        width: 2px; height: 1.05em;
-        background: var(--text);
+        width: 2px;
+        height: 1.05em;
+        background: var(--accent);
         vertical-align: text-bottom;
         margin-left: 2px;
         animation: blink 1s step-start infinite;
-        opacity: 0.65;
+        opacity: 0.7;
     }
     @keyframes blink { 50% { opacity: 0; } }
 
-    /* ---------- ATTACH CHIP ---------- */
-    .attach-chip {
-        display: inline-flex; align-items: center; gap: 8px;
-        padding: 6px 10px;
-        background: var(--bg-2);
-        border: 1px solid var(--border-soft);
-        border-radius: var(--radius-sm);
-        font-size: 12px; color: var(--text-dim) !important;
-        margin: 4px 0 8px 0;
-    }
-    .attach-chip span { color: var(--text-dim) !important; }
-    .attach-chip a {
-        color: var(--text-mute) !important;
-        text-decoration: none;
-        margin-left: 4px;
-    }
-    .attach-chip a:hover { color: var(--accent) !important; }
-
-    /* ---------- MISC ---------- */
+    /* ============================================================
+       GENERIC BUTTONS
+       ============================================================ */
     .stButton > button {
-        background: #ffffff !important;
+        background: var(--card) !important;
         color: var(--text-dim) !important;
         border: 1px solid var(--border) !important;
         border-radius: var(--radius-sm) !important;
         font-weight: 500 !important;
         font-size: 13px !important;
-        padding: 0.45rem 1rem !important;
-        box-shadow: var(--shadow-sm) !important;
+        padding: 0.5rem 1rem !important;
+        transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease !important;
+        box-shadow: none !important;
+        cursor: pointer !important;
     }
     .stButton > button:hover {
         border-color: var(--accent) !important;
         color: var(--accent) !important;
+        background: rgba(201,100,66,.03) !important;
     }
-    .stButton > button p { color: inherit !important; }
+    .stButton > button:focus { box-shadow: none !important; outline: none !important; }
+    .stButton > button p { color: inherit !important; margin: 0 !important; }
 
+    /* Popovers (outside composer) */
+    [data-testid="stPopover"] > button {
+        background: var(--card) !important;
+        color: var(--text-dim) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: var(--radius-sm) !important;
+    }
+    [data-testid="stPopoverBody"] {
+        background: var(--card) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: var(--radius-md) !important;
+        box-shadow: 0 4px 20px rgba(0,0,0,.08) !important;
+        color: var(--text) !important;
+    }
+    [data-testid="stPopoverBody"] * { color: var(--text) !important; }
+
+    /* File uploader */
     [data-testid="stFileUploader"] section {
-        background: var(--bg-2) !important;
+        background: var(--panel) !important;
         border: 1px dashed var(--border) !important;
         border-radius: var(--radius-sm) !important;
     }
     [data-testid="stFileUploader"] section * { color: var(--text) !important; }
+    [data-testid="stFileUploader"] section button {
+        background: var(--card) !important;
+        color: var(--text) !important;
+        border: 1px solid var(--border) !important;
+    }
 
+    /* Alerts */
     .stAlert {
         border-radius: var(--radius-sm) !important;
         border: 1px solid var(--border) !important;
-        background: var(--bg-2) !important;
+        background: var(--panel) !important;
         color: var(--text) !important;
     }
     .stAlert * { color: var(--text) !important; }
 
+    /* Toast */
+    [data-testid="stToast"] {
+        background: var(--card) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: var(--radius-md) !important;
+        color: var(--text) !important;
+        box-shadow: 0 4px 16px rgba(0,0,0,.08) !important;
+    }
+    [data-testid="stToast"] * { color: var(--text) !important; }
+
+    /* ---------- SCROLLBAR ---------- */
     ::-webkit-scrollbar { width: 8px; height: 8px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #dedbd3; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb {
+        background: #dedbd3;
+        border-radius: 4px;
+    }
     ::-webkit-scrollbar-thumb:hover { background: #c9c6be; }
+
+    /* ---------- RESPONSIVE ---------- */
+    @media (max-width: 900px) {
+        section[data-testid="stSidebar"] {
+            width: 180px !important;
+            min-width: 180px !important;
+            max-width: 180px !important;
+        }
+        .app-brand-tag { display: none; }
+        .preview-empty { min-height: 340px; padding: 40px 20px; }
+    }
 </style>
 """, unsafe_allow_html=True)
 
 
 # ============================================================
-# TOPBAR
+# SIDEBAR
 # ============================================================
-st.markdown(f"""
-<div class="topbar">
-  <div class="topbar-left">
-    <div class="topbar-brand">
-      <div class="brand-mark">A</div>
-      <div>
-        <div class="brand-name">Aether Engine</div>
-        <div class="brand-tag">Espaco de trabalho conversacional</div>
-      </div>
+with st.sidebar:
+    st.markdown(f"""
+    <div class="sb-brand">
+        <div class="sb-brand-mark">A</div>
+        <div class="sb-brand-info">
+            <div class="sb-brand-name">Aether</div>
+            <div class="sb-brand-tag">Workspace</div>
+        </div>
     </div>
-  </div>
-  <div class="topbar-right">
-    <div class="status-pill"><span class="status-dot"></span> Online</div>
-  </div>
+
+    <a class="sb-btn sb-btn-primary" href="?a=new" target="_self">
+        {ICON_PLUS}<span>Novo projeto</span>
+    </a>
+
+    <div class="sb-section">Espaco</div>
+    <a class="sb-btn" href="?a=projects" target="_self">
+        {ICON_FOLDER}<span>Projetos</span>
+    </a>
+    <a class="sb-btn" href="?a=history" target="_self">
+        {ICON_HISTORY}<span>Historico</span>
+    </a>
+
+    <div class="sb-spacer"></div>
+
+    <div class="sb-section">Sistema</div>
+    <a class="sb-btn" href="?a=settings" target="_self">
+        {ICON_GEAR}<span>Configuracoes</span>
+    </a>
+    <a class="sb-btn" href="?a=clear_chat" target="_self">
+        {ICON_TRASH}<span>Limpar conversa</span>
+    </a>
+    """, unsafe_allow_html=True)
+
+
+# ============================================================
+# APP HEADER
+# ============================================================
+st.markdown("""
+<div class="app-header">
+    <div class="app-header-left">
+        <div class="app-brand-mark">A</div>
+        <div class="app-brand-info">
+            <div class="app-brand-name">Aether Engine</div>
+            <div class="app-brand-tag">Espaco de trabalho conversacional</div>
+        </div>
+    </div>
+    <div class="app-status">
+        <span class="app-status-dot"></span>
+        <span>Online</span>
+    </div>
 </div>
 """, unsafe_allow_html=True)
 
-tb1, tb2, tb3, tb4 = st.columns([10, 0.6, 0.6, 0.6], gap="small")
-with tb3:
-    with st.popover("folder", use_container_width=False):
-        st.markdown("**Projetos**")
-        st.markdown("- Default workspace")
-        st.markdown("- Landing pages")
-        st.markdown("- Dashboards")
-        if st.button("Novo projeto", use_container_width=True):
-            st.toast("Funcionalidade em desenvolvimento", icon="!")
-with tb4:
-    with st.popover("user", use_container_width=False):
-        st.markdown("**Perfil**")
-        st.markdown("Sessao local")
-        st.caption(f"Mensagens nesta sessao: {len(st.session_state.messages)}")
-        if st.button("Limpar historico", use_container_width=True):
-            st.session_state.messages = []
-            st.session_state.current_artifact = None
-            st.rerun()
-
 
 # ============================================================
-# LAYOUT
+# LAYOUT — 2 COLUNAS (chat | preview)
 # ============================================================
-if st.session_state.fullscreen:
-    rail_col, preview_col = st.columns([0.35, 8], gap="small")
-    chat_col = None
-else:
-    rail_col, chat_col, preview_col = st.columns([0.35, 1.15, 1], gap="small")
-
-
-# ------------------------------------------------------------
-# RAIL
-# ------------------------------------------------------------
-with rail_col:
-    st.markdown(f"""
-    <div class="rail">
-      <a class="rail-btn primary" href="?a=new" title="Nova conversa" target="_self">{ICON_PLUS}</a>
-      <div class="rail-divider"></div>
-      <a class="rail-btn" href="?a=example" title="Exemplo" target="_self">{ICON_SPARK}</a>
-      <div class="rail-btn" title="Projetos">{ICON_FOLDER}</div>
-      <div class="rail-spacer"></div>
-      <div class="rail-divider"></div>
-      <div class="rail-btn" title="Configuracoes">{ICON_GEAR}</div>
-    </div>
-    """, unsafe_allow_html=True)
+col_chat, col_preview = st.columns([1, 1.15], gap="medium")
 
 
 # ------------------------------------------------------------
@@ -774,120 +1100,124 @@ with rail_col:
 # ------------------------------------------------------------
 _pending_from_render = None
 
-if chat_col is not None:
-    with chat_col:
+with col_chat:
 
+    st.markdown(
+        '<div class="panel-label"><span class="panel-label-title">Conversa</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    chat_box = st.container(height=580)
+
+    with chat_box:
+        if not st.session_state.messages:
+            st.markdown(
+                '<div style="padding: 40px 20px; text-align: center; color: #999; font-size: 13px;">'
+                'Envie uma mensagem para comecar uma nova conversa.'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+        for msg in st.session_state.messages:
+            if msg["role"] == "user":
+                with st.chat_message("user", avatar=_AVATAR_USER):
+                    st.markdown(msg["content"])
+            else:
+                with st.chat_message("assistant", avatar=_AVATAR_AI):
+                    if msg.get("thinking"):
+                        with st.expander("Processando raciocinio"):
+                            st.markdown(msg["thinking"])
+                    if msg.get("content"):
+                        st.markdown(msg["content"])
+
+    # Chip de anexo ativo
+    if st.session_state.attached_name:
         st.markdown(
-            '<div class="panel-label"><span>Conversa</span></div>',
+            f'<div class="attach-chip">'
+            f'<span>{st.session_state.attached_name}</span>'
+            f'<a href="?a=clear_attach" target="_self" title="Remover">remover</a>'
+            f'</div>',
             unsafe_allow_html=True,
         )
 
-        chat_box = st.container(height=520)
-
-        with chat_box:
-            for msg in st.session_state.messages:
-                if msg["role"] == "user":
-                    with st.chat_message("user", avatar=_AVATAR_USER):
-                        st.markdown(msg["content"])
-                else:
-                    with st.chat_message("assistant", avatar=_AVATAR_AI):
-                        if msg.get("thinking"):
-                            with st.expander("Processando raciocinio"):
-                                st.markdown(msg["thinking"])
-                        if msg.get("content"):
-                            st.markdown(msg["content"])
-
-        if st.session_state.attached_name:
-            st.markdown(
-                f'<div class="attach-chip">'
-                f'<span>{st.session_state.attached_name}</span>'
-                f'<a href="?a=clear_attach" target="_self" title="Remover">x</a>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-
-        with st.form("composer", clear_on_submit=True):
-            c1, c2, c3, c4 = st.columns(
-                [0.4, 6, 0.4, 0.85],
-                gap="small",
-                vertical_alignment="center",
-            )
-            with c1:
-                with st.popover("clip", use_container_width=False):
-                    uploaded = st.file_uploader(
-                        "Anexar arquivo",
-                        type=["txt", "md", "py", "js", "html", "css", "json"],
-                        label_visibility="collapsed",
-                    )
-                    if uploaded is not None:
-                        try:
-                            st.session_state.attached_name = uploaded.name
-                            st.session_state.attached_text = uploaded.read().decode(
-                                "utf-8", errors="ignore"
-                            )
-                            st.success(f"Anexado: {uploaded.name}")
-                        except Exception as e:
-                            st.error(f"Erro ao ler arquivo: {e}")
-
-            with c2:
-                user_msg = st.text_input(
-                    "mensagem",
-                    placeholder="Envie uma mensagem para o Aether Engine...",
+    # Composer
+    with st.form("composer", clear_on_submit=True):
+        c1, c2, c3, c4 = st.columns(
+            [0.35, 6, 0.35, 0.7],
+            gap="small",
+            vertical_alignment="center",
+        )
+        with c1:
+            with st.popover("Anexar", use_container_width=False):
+                uploaded = st.file_uploader(
+                    "Anexar arquivo",
+                    type=["txt", "md", "py", "js", "html", "css", "json"],
                     label_visibility="collapsed",
                 )
-            with c3:
-                st.markdown(
-                    f'<a class="panel-tool" href="?a=mic" target="_self" '
-                    f'title="Gravar audio" style="width:38px;height:38px;">'
-                    f'{ICON_MIC}</a>',
-                    unsafe_allow_html=True,
-                )
-            with c4:
-                submitted = st.form_submit_button("Enviar")
+                if uploaded is not None:
+                    try:
+                        st.session_state.attached_name = uploaded.name
+                        st.session_state.attached_text = uploaded.read().decode(
+                            "utf-8", errors="ignore"
+                        )
+                        st.success(f"Anexado: {uploaded.name}")
+                    except Exception as e:
+                        st.error(f"Erro ao ler arquivo: {e}")
 
-        if submitted and user_msg.strip():
-            _pending_from_render = user_msg.strip()
+        with c2:
+            user_msg = st.text_input(
+                "mensagem",
+                placeholder="Envie uma mensagem para o Aether Engine...",
+                label_visibility="collapsed",
+            )
+        with c3:
+            st.markdown(
+                f'<a class="composer-mic" href="?a=mic" target="_self" '
+                f'title="Gravar audio">{ICON_MIC}</a>',
+                unsafe_allow_html=True,
+            )
+        with c4:
+            submitted = st.form_submit_button("Enviar")
+
+    if submitted and user_msg.strip():
+        _pending_from_render = user_msg.strip()
 
 
 # ------------------------------------------------------------
-# PREVIEW  —  BLOCO SUBSTITUIDO
+# PREVIEW
 # ------------------------------------------------------------
-with preview_col:
+with col_preview:
 
-    fs_icon = "✕" if st.session_state.fullscreen else ICON_FULL
     st.markdown(f"""
     <div class="panel-label">
-      <span>Preview</span>
-      <div class="panel-label-tools">
-        <a class="panel-tool" href="?a=refresh" target="_self" title="Atualizar">{ICON_REFRESH}</a>
-        <a class="panel-tool" href="?a=fullscreen" target="_self" title="Tela cheia">{fs_icon}</a>
-      </div>
+        <span class="panel-label-title">Preview</span>
+        <div class="panel-label-tools">
+            <a class="panel-tool" href="?a=refresh" target="_self" title="Atualizar">{ICON_REFRESH}</a>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # ---- Bloco substituido (exatamente como pedido) ----
-    if st.session_state.current_artifact:
-        components.html(
-            st.session_state.current_artifact,
-            height=750,
-            scrolling=True,
-        )
-    else:
-        st.markdown(
-            '<div style="border: 1px dashed #222; border-radius: 8px; height: 750px; '
-            'display: flex; align-items: center; justify-content: center; color: #444; font-size: 14px;">'
-            'Nenhum componente visual foi gerado ainda.'
-            '</div>',
-            unsafe_allow_html=True,
-        )
+    preview_box = st.container(height=640)
 
-    # Codigo-fonte colapsado abaixo (opcional, nao quebra o preview)
-    if st.session_state.current_artifact:
-        with st.expander("Ver codigo-fonte"):
-            st.code(
+    with preview_box:
+        if st.session_state.current_artifact:
+            components.html(
                 st.session_state.current_artifact,
-                language=st.session_state.artifact_lang or "html",
+                height=620,
+                scrolling=True,
             )
+        else:
+            st.markdown(f"""
+            <div class="preview-empty">
+                <div class="preview-empty-icon">{ICON_IMAGE}</div>
+                <div class="preview-empty-title">Seu preview aparecera aqui</div>
+                <div class="preview-empty-text">
+                    Peca ao Aether para gerar uma interface ou componente visual.
+                </div>
+                <a class="preview-empty-btn" href="?a=example" target="_self">
+                    Ver exemplo
+                </a>
+            </div>
+            """, unsafe_allow_html=True)
 
 
 # ============================================================
@@ -906,102 +1236,101 @@ if _prompt:
 
     st.session_state.messages.append({"role": "user", "content": _prompt})
 
-    if chat_col is not None:
-        with chat_col:
-            with st.chat_message("user", avatar=_AVATAR_USER):
-                st.markdown(_prompt)
+    with col_chat:
+        with st.chat_message("user", avatar=_AVATAR_USER):
+            st.markdown(_prompt)
 
-            with st.chat_message("assistant", avatar=_AVATAR_AI):
+        with st.chat_message("assistant", avatar=_AVATAR_AI):
 
-                thinking_slot = st.expander("Processando raciocinio", expanded=False)
-                with thinking_slot:
-                    thinking_body = st.empty()
+            thinking_slot = st.expander("Processando raciocinio", expanded=False)
+            with thinking_slot:
+                thinking_body = st.empty()
 
-                text_body = st.empty()
+            text_body = st.empty()
 
-                raw_buffer = ""
-                reasoning_accum = ""
+            raw_buffer = ""
+            reasoning_accum = ""
 
-                try:
-                    api_messages = (
-                        [{"role": "system", "content": SYSTEM_PROMPT}]
-                        + st.session_state.messages
-                    )
+            try:
+                api_messages = (
+                    [{"role": "system", "content": SYSTEM_PROMPT}]
+                    + st.session_state.messages
+                )
 
-                    completion = client.chat.completions.create(
-                        model=MODEL,
-                        messages=api_messages,
-                        temperature=st.session_state.temperature,
-                        top_p=st.session_state.top_p,
-                        max_tokens=st.session_state.max_tokens,
-                        extra_body={"chat_template_kwargs": {"enable_thinking": True}},
-                        stream=True,
-                    )
+                completion = client.chat.completions.create(
+                    model=MODEL,
+                    messages=api_messages,
+                    temperature=st.session_state.temperature,
+                    top_p=st.session_state.top_p,
+                    max_tokens=st.session_state.max_tokens,
+                    extra_body={"chat_template_kwargs": {"enable_thinking": True}},
+                    stream=True,
+                )
 
-                    for chunk in completion:
-                        if not chunk.choices:
-                            continue
-                        delta = chunk.choices[0].delta
+                for chunk in completion:
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
 
-                        reasoning = getattr(delta, "reasoning_content", None)
-                        if reasoning:
-                            reasoning_accum += reasoning
+                    reasoning = getattr(delta, "reasoning_content", None)
+                    if reasoning:
+                        reasoning_accum += reasoning
+                        thinking_body.markdown(
+                            reasoning_accum + '<span class="cursor"></span>',
+                            unsafe_allow_html=True,
+                        )
+
+                    if delta.content:
+                        raw_buffer += delta.content
+
+                        partial_visible, partial_think = extract_thinking(raw_buffer)
+                        partial_visible, _, _ = extract_artifact(partial_visible)
+                        partial_visible = _strip_dangling(partial_visible)
+                        partial_visible = strip_emojis(partial_visible)
+
+                        combined = "\n\n".join(
+                            filter(None, [reasoning_accum, partial_think])
+                        )
+                        if combined:
                             thinking_body.markdown(
-                                reasoning_accum + '<span class="cursor"></span>',
+                                combined + '<span class="cursor"></span>',
+                                unsafe_allow_html=True,
+                            )
+                        if partial_visible:
+                            text_body.markdown(
+                                partial_visible + '<span class="cursor"></span>',
                                 unsafe_allow_html=True,
                             )
 
-                        if delta.content:
-                            raw_buffer += delta.content
+                parsed = parse_response(raw_buffer)
+                final_thinking = "\n\n".join(
+                    filter(None, [reasoning_accum, parsed["thinking"]])
+                )
 
-                            partial_visible, partial_think = extract_thinking(raw_buffer)
-                            partial_visible, _, _ = extract_artifact(partial_visible)
-                            partial_visible = _strip_dangling(partial_visible)
-                            partial_visible = strip_emojis(partial_visible)
+                if final_thinking:
+                    thinking_body.markdown(final_thinking)
+                else:
+                    thinking_body.markdown("_Sem raciocinio exposto._")
 
-                            combined = "\n\n".join(
-                                filter(None, [reasoning_accum, partial_think])
-                            )
-                            if combined:
-                                thinking_body.markdown(
-                                    combined + '<span class="cursor"></span>',
-                                    unsafe_allow_html=True,
-                                )
-                            if partial_visible:
-                                text_body.markdown(
-                                    partial_visible + '<span class="cursor"></span>',
-                                    unsafe_allow_html=True,
-                                )
+                text_body.markdown(parsed["text"] or "_Sem resposta._")
 
-                    parsed = parse_response(raw_buffer)
-                    final_thinking = "\n\n".join(
-                        filter(None, [reasoning_accum, parsed["thinking"]])
-                    )
+                if parsed["artifact"]:
+                    st.session_state.current_artifact = parsed["artifact"]
+                    st.session_state.artifact_lang = parsed["lang"]
 
-                    if final_thinking:
-                        thinking_body.markdown(final_thinking)
-                    else:
-                        thinking_body.markdown("_Sem raciocinio exposto._")
+                st.session_state.messages.append({
+                    "role":     "assistant",
+                    "content":  parsed["text"],
+                    "thinking": final_thinking,
+                })
 
-                    text_body.markdown(parsed["text"] or "_Sem resposta._")
-
-                    if parsed["artifact"]:
-                        st.session_state.current_artifact = parsed["artifact"]
-                        st.session_state.artifact_lang = parsed["lang"]
-
-                    st.session_state.messages.append({
-                        "role":     "assistant",
-                        "content":  parsed["text"],
-                        "thinking": final_thinking,
-                    })
-
-                except Exception as e:
-                    st.error(f"Falha ao processar resposta: {e}")
-                    st.session_state.messages.append({
-                        "role":     "assistant",
-                        "content":  f"Erro: {e}",
-                        "thinking": "",
-                    })
+            except Exception as e:
+                st.error(f"Falha ao processar resposta: {e}")
+                st.session_state.messages.append({
+                    "role":     "assistant",
+                    "content":  f"Erro: {e}",
+                    "thinking": "",
+                })
 
     st.session_state.attached_name = None
     st.session_state.attached_text = None
