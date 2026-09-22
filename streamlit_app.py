@@ -16,7 +16,7 @@ from openai import OpenAI
 # ============================================================
 client = OpenAI(
     base_url="https://integrate.api.nvidia.com/v1",
-    api_key="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",
+    api_key="aura",
 )
 
 MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
