@@ -2,7 +2,7 @@ import streamlit as st
 from openai import OpenAI
 
 # ============================================================
-# CONFIGURAÇÃO DA API NVIDIA (mesma do seu código original)
+# CONFIGURAÇÃO DA API NVIDIA
 # ============================================================
 client = OpenAI(
     base_url="https://integrate.api.nvidia.com/v1",
@@ -12,118 +12,185 @@ client = OpenAI(
 MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
 
 # ============================================================
-# CONFIGURAÇÃO DA PÁGINA
+# PAGE CONFIG
 # ============================================================
 st.set_page_config(
-    page_title="Nemotron Chat",
-    page_icon="🤖",
+    page_title="NVIDIA · Nemotron Chat",
+    page_icon="🟩",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # ============================================================
-# CSS CUSTOMIZADO (visual moderno estilo ChatGPT/Claude)
+# CSS — PADRÃO NVIDIA INDUSTRIAL
+# Regras: fundo preto sólido, cinza escuro secundário, bordas
+# metálicas finas, cantos retos (6px max), sem sombras, sem
+# gradientes em texto. Verde #76B900 apenas como acento.
 # ============================================================
 st.markdown("""
 <style>
-    /* ---- Fonte e fundo geral ---- */
+    /* ---------- RESET / BASE ---------- */
     html, body, [class*="css"] {
         font-family: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+        color: #b3b3b3;
     }
 
-    /* ---- Título principal com gradiente ---- */
-    .main-title {
-        font-size: 2.1rem;
-        font-weight: 800;
-        background: linear-gradient(90deg, #76b900 0%, #00d4ff 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        margin-bottom: 0.2rem;
-    }
-    .main-subtitle {
-        color: #8a8f98;
-        font-size: 0.95rem;
-        margin-bottom: 1.5rem;
+    .stApp {
+        background-color: #0b0b0b;
     }
 
-    /* ---- Bolhas de mensagem ---- */
+    /* Remove decoração padrão do Streamlit (header, footer) */
+    header[data-testid="stHeader"] {
+        background: transparent;
+    }
+    footer { visibility: hidden; }
+    #MainMenu { visibility: hidden; }
+
+    /* ---------- TIPOGRAFIA ---------- */
+    h1, h2, h3, h4, h5, h6 {
+        color: #ffffff !important;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+    }
+    p, span, label, li {
+        color: #b3b3b3;
+    }
+    a {
+        color: #76B900;
+        text-decoration: none;
+    }
+
+    /* ---------- SIDEBAR ---------- */
+    [data-testid="stSidebar"] {
+        background-color: #141414;
+        border-right: 1px solid #252525;
+    }
+    [data-testid="stSidebar"] > div:first-child {
+        padding-top: 1.5rem;
+    }
+
+    /* ---------- BLOCOS / CARDS / MENSAGENS ---------- */
     [data-testid="stChatMessage"] {
-        border-radius: 16px;
+        background-color: #141414;
+        border: 1px solid #252525;
+        border-radius: 6px !important;
         padding: 14px 18px;
         margin-bottom: 10px;
-        border: 1px solid rgba(255,255,255,0.06);
-        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        box-shadow: none !important;
     }
 
-    /* Mensagem do usuário - leve destaque azul */
-    [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) {
-        background: linear-gradient(135deg, rgba(0, 212, 255, 0.08), rgba(118, 185, 0, 0.05));
-        border-left: 3px solid #00d4ff;
-    }
-
-    /* Mensagem do assistente - leve destaque verde */
+    /* Borda de acento verde apenas no lado do assistente */
     [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) {
-        background: linear-gradient(135deg, rgba(118, 185, 0, 0.08), rgba(0, 212, 255, 0.04));
-        border-left: 3px solid #76b900;
+        border-left: 2px solid #76B900;
     }
 
-    /* ---- Sidebar ---- */
-    [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #1a1d23 0%, #14161a 100%);
-        border-right: 1px solid rgba(255,255,255,0.06);
-    }
-    [data-testid="stSidebar"] h1,
-    [data-testid="stSidebar"] h2,
-    [data-testid="stSidebar"] h3 {
-        color: #f0f2f5;
-    }
-
-    /* ---- Botão "Limpar Histórico" ---- */
+    /* ---------- BOTÕES ---------- */
+    .stButton > button,
     [data-testid="stSidebar"] .stButton > button {
         width: 100%;
-        border-radius: 10px;
+        background-color: #141414;
+        color: #ffffff;
+        border: 1px solid #252525;
+        border-radius: 6px !important;
         font-weight: 600;
-        padding: 0.6rem 1rem;
-        background: linear-gradient(90deg, #76b900, #5a8f00);
-        color: white;
-        border: none;
-        transition: all 0.2s ease;
+        padding: 0.55rem 1rem;
+        transition: border-color 0.15s ease, color 0.15s ease;
+        box-shadow: none !important;
     }
+    .stButton > button:hover,
     [data-testid="stSidebar"] .stButton > button:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(118, 185, 0, 0.4);
-        background: linear-gradient(90deg, #8bcf1a, #76b900);
+        border-color: #76B900;
+        color: #76B900;
+    }
+    .stButton > button:focus:not(:active) {
+        border-color: #76B900;
+        color: #76B900;
+        box-shadow: none !important;
     }
 
-    /* ---- Expander do raciocínio ---- */
+    /* Botão primário = verde sólido (ação destrutiva / principal) */
+    .stButton > button[kind="primary"] {
+        background-color: #76B900;
+        color: #0b0b0b;
+        border: 1px solid #76B900;
+    }
+    .stButton > button[kind="primary"]:hover {
+        background-color: #8bcf1a;
+        border-color: #8bcf1a;
+        color: #0b0b0b;
+    }
+
+    /* ---------- EXPANDER (raciocínio da IA) ---------- */
     [data-testid="stExpander"] {
-        border-radius: 12px;
-        border: 1px solid rgba(118, 185, 0, 0.25);
-        background: rgba(118, 185, 0, 0.04);
+        background-color: #0e0e0e;
+        border: 1px solid #252525;
+        border-radius: 6px !important;
         overflow: hidden;
     }
     [data-testid="stExpander"] summary {
+        color: #b3b3b3;
         font-weight: 600;
-        color: #a8d84a;
+        font-size: 0.9rem;
+    }
+    [data-testid="stExpander"] summary:hover {
+        color: #76B900;
     }
 
-    /* ---- Input de chat ---- */
+    /* ---------- INPUT DE CHAT ---------- */
+    [data-testid="stChatInput"] {
+        background-color: #141414;
+        border: 1px solid #252525;
+        border-radius: 6px !important;
+    }
+    [data-testid="stChatInput"]:focus-within {
+        border-color: #76B900;
+    }
     [data-testid="stChatInput"] textarea {
-        border-radius: 14px !important;
-        border: 1px solid rgba(255,255,255,0.1) !important;
-        background: #1e2127 !important;
+        background-color: transparent !important;
+        color: #ffffff !important;
+        border-radius: 6px !important;
+    }
+    [data-testid="stChatInput"] textarea::placeholder {
+        color: #6a6a6a;
     }
 
-    /* ---- Cursor de digitação ---- */
+    /* ---------- DIVISORES ---------- */
+    hr {
+        border-color: #252525 !important;
+        margin: 1rem 0;
+    }
+
+    /* ---------- CURSOR DE DIGITAÇÃO ---------- */
     .typing-cursor {
         display: inline-block;
-        color: #76b900;
+        color: #76B900;
         font-weight: 700;
         animation: blink 1s step-start infinite;
         margin-left: 2px;
     }
     @keyframes blink {
         50% { opacity: 0; }
+    }
+
+    /* ---------- BADGE / LABEL INDUSTRIAL ---------- */
+    .nv-badge {
+        display: inline-block;
+        font-size: 0.7rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #76B900;
+        border: 1px solid #252525;
+        padding: 3px 8px;
+        border-radius: 4px;
+        margin-bottom: 0.75rem;
+    }
+
+    /* ---------- RODAPÉ / META ---------- */
+    .nv-meta {
+        font-size: 0.78rem;
+        color: #6a6a6a;
+        letter-spacing: 0.02em;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -132,96 +199,94 @@ st.markdown("""
 # SIDEBAR
 # ============================================================
 with st.sidebar:
-    st.markdown("## 🤖 Nemotron Chat")
-    st.caption("Powered by NVIDIA NIM")
+    st.markdown('<span class="nv-badge">NVIDIA · NIM</span>', unsafe_allow_html=True)
+    st.markdown("## Nemotron Chat")
+    st.markdown('<span class="nv-meta">nvidia/nemotron-3-ultra-550b-a55b</span>', unsafe_allow_html=True)
     st.markdown("---")
 
-    # Botão limpar histórico
+    # Ação principal: limpar histórico
     if st.button("🗑️  Limpar Histórico", use_container_width=True, type="primary"):
         st.session_state.messages = []
-        st.toast("Histórico limpo com sucesso!", icon="✅")
+        st.toast("Histórico limpo.", icon="✅")
         st.rerun()
 
     st.markdown("---")
 
-    # Instruções
-    st.markdown("### 📖 Como usar")
+    st.markdown("### Operação")
     st.markdown(
         """
-        1. Digite sua pergunta no campo abaixo  
-        2. Aguarde a IA responder em tempo real  
-        3. Clique em **🧠 Pensamento da IA** para ver o raciocínio  
-        4. Use **Limpar Histórico** para começar do zero  
+        - Digite a consulta no campo inferior  
+        - Resposta em streaming em tempo real  
+        - Abra **Pensamento da IA** para auditar o raciocínio  
         """
     )
 
     st.markdown("---")
 
-    # Configurações do modelo
-    st.markdown("### ⚙️ Configurações")
-    st.markdown(f"**Modelo:**  \n`{MODEL}`")
-    st.markdown("**Thinking:** ✅ Ativado")
-    st.markdown("**Temperature:** `1.0`")
-    st.markdown("**Top-p:** `0.95`")
-    st.markdown("**Max tokens:** `16.384`")
+    st.markdown("### Parâmetros")
+    st.markdown(
+        f"""
+        - **Modelo:** `{MODEL}`  
+        - **Thinking:** habilitado  
+        - **Temperature:** `1.0`  
+        - **Top-p:** `0.95`  
+        - **Max tokens:** `16384`  
+        """
+    )
 
     st.markdown("---")
-    st.caption("💡 Construído com Streamlit + OpenAI SDK")
-    st.caption("🎨 Visual inspirado em ChatGPT & Claude")
+    st.markdown('<span class="nv-meta">Streamlit · OpenAI SDK · NVIDIA NIM</span>', unsafe_allow_html=True)
 
 # ============================================================
-# CABEÇALHO PRINCIPAL
+# CABEÇALHO
 # ============================================================
-st.markdown('<div class="main-title">💬 Nemotron-3-Ultra Chat</div>', unsafe_allow_html=True)
+st.markdown('<span class="nv-badge">Sessão ativa</span>', unsafe_allow_html=True)
+st.markdown("# Nemotron-3-Ultra Chat")
 st.markdown(
-    '<div class="main-subtitle">Converse com o modelo mais avançado da NVIDIA — com raciocínio em tempo real.</div>',
+    '<span class="nv-meta">Console de conversação com raciocínio auditável em tempo real.</span>',
     unsafe_allow_html=True
 )
+st.markdown("---")
 
 # ============================================================
-# ESTADO DA SESSÃO
+# ESTADO
 # ============================================================
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
 # ============================================================
-# RENDERIZA HISTÓRICO (recarregado a cada interação)
+# RENDER DO HISTÓRICO
 # ============================================================
 for msg in st.session_state.messages:
     if msg["role"] == "user":
         with st.chat_message("user", avatar="🧑‍💻"):
             st.markdown(msg["content"])
     else:
-        with st.chat_message("assistant", avatar="🤖"):
+        with st.chat_message("assistant", avatar="🟩"):
             if msg.get("reasoning"):
-                with st.expander("🧠 Pensamento da IA...", expanded=False):
+                with st.expander("🧠 Pensamento da IA", expanded=False):
                     st.markdown(msg["reasoning"])
             st.markdown(msg["content"])
 
 # ============================================================
-# INPUT DO USUÁRIO
+# INPUT + STREAMING
 # ============================================================
-if prompt := st.chat_input("Digite sua mensagem para a IA..."):
+if prompt := st.chat_input("Digite sua consulta..."):
 
-    # 1) Salva e exibe a mensagem do usuário
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user", avatar="🧑‍💻"):
         st.markdown(prompt)
 
-    # 2) Prepara a área do assistente
-    with st.chat_message("assistant", avatar="🤖"):
-        # Expander do raciocínio (colapsado por padrão)
-        reasoning_box = st.expander("🧠 Pensamento da IA...", expanded=False)
+    with st.chat_message("assistant", avatar="🟩"):
+        reasoning_box = st.expander("🧠 Pensamento da IA", expanded=False)
         with reasoning_box:
             reasoning_placeholder = st.empty()
 
-        # Área da resposta final
         content_placeholder = st.empty()
 
         full_reasoning = ""
         full_content = ""
 
-        # 3) Chama a API em modo streaming
         try:
             completion = client.chat.completions.create(
                 model=MODEL,
@@ -239,7 +304,6 @@ if prompt := st.chat_input("Digite sua mensagem para a IA..."):
 
                 delta = chunk.choices[0].delta
 
-                # Captura o raciocínio (reasoning_content)
                 reasoning = getattr(delta, "reasoning_content", None)
                 if reasoning:
                     full_reasoning += reasoning
@@ -248,7 +312,6 @@ if prompt := st.chat_input("Digite sua mensagem para a IA..."):
                         unsafe_allow_html=True
                     )
 
-                # Captura o conteúdo final
                 if delta.content:
                     full_content += delta.content
                     content_placeholder.markdown(
@@ -256,16 +319,15 @@ if prompt := st.chat_input("Digite sua mensagem para a IA..."):
                         unsafe_allow_html=True
                     )
 
-            # 4) Renderização final (sem cursor piscando)
+            # Render final (sem cursor)
             if full_reasoning:
                 reasoning_placeholder.markdown(full_reasoning)
             content_placeholder.markdown(full_content if full_content else "_Sem resposta._")
 
         except Exception as e:
-            st.error(f"❌ Erro ao conectar com a API da NVIDIA:\n\n`{e}`")
-            full_content = f"Ocorreu um erro: {e}"
+            st.error(f"Falha na chamada da API NVIDIA: {e}")
+            full_content = f"Erro: {e}"
 
-        # 5) Salva a resposta completa no histórico
         st.session_state.messages.append({
             "role": "assistant",
             "content": full_content,
