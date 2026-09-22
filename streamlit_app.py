@@ -1,8 +1,8 @@
 """
 Aether Engine
 -------------
-Chat com artifacts em tempo real. Layout inspirado em mensageria moderna:
-usuario a esquerda em cinza, assistente a direita em laranja.
+Chat com artifacts em tempo real. Visual inspirado no Claude (Anthropic).
+Mensagens alinhadas a esquerda, fluxo continuo, input flutuante em pilula.
 """
 
 import os
@@ -43,26 +43,16 @@ MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
 
 
 # ============================================================
-# AVATARES SVG
+# AVATARES (invisiveis na UI, mantidos para targeting CSS)
 # ============================================================
 _SVG_USER = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" '
-    'data-id="useravatar">'
-    '<circle cx="20" cy="20" r="20" fill="#2a2a2a"/>'
-    '<circle cx="20" cy="16" r="6.5" fill="#8a8a8a"/>'
-    '<path d="M7 37 Q20 24 33 37 Z" fill="#8a8a8a"/>'
-    '</svg>'
+    'data-id="useravatar"><circle cx="20" cy="20" r="20" fill="none"/></svg>'
 )
-
 _SVG_AI = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" '
-    'data-id="aiavatar">'
-    '<circle cx="20" cy="20" r="20" fill="#c96442"/>'
-    '<text x="20" y="27" font-family="Georgia, serif" font-size="22" '
-    'fill="#fbfaf7" text-anchor="middle" font-weight="500">A</text>'
-    '</svg>'
+    'data-id="aiavatar"><circle cx="20" cy="20" r="20" fill="none"/></svg>'
 )
-
 _AVATAR_USER = "data:image/svg+xml;charset=utf-8," + urllib.parse.quote(_SVG_USER)
 _AVATAR_AI   = "data:image/svg+xml;charset=utf-8," + urllib.parse.quote(_SVG_AI)
 
@@ -104,7 +94,7 @@ st.set_page_config(
 
 
 # ============================================================
-# CSS
+# CSS — ESTETICA CLAUDE (light mode off-white)
 # ============================================================
 st.markdown("""
 <style>
@@ -121,238 +111,295 @@ st.markdown("""
 
     /* ---------- TOKENS ---------- */
     :root {
-        --bg:             #0a0a0a;
-        --bg-panel:       #141414;
-        --bubble-user:    #2a2a2a;
-        --bubble-ai:      #1a1a1a;
-        --text-user:      #e8e8e8;
-        --text-ai:        #e8a87c;
-        --text-mute:      #7a7a7a;
-        --border:         #252525;
-        --border-soft:    #1e1e1e;
-        --accent:         #c96442;
-        --accent-bright:  #ffb87a;
-        --code-bg:        #2a1810;
+        --bg:           #fbfaf7;
+        --bg-panel:     #f5f3ee;
+        --bg-user:      #f0eee6;
+        --bg-code:      #f5f3ee;
+        --border:       #e8e5dd;
+        --border-soft:  #efece4;
+        --text:         #1a1a1a;
+        --text-dim:     #6b6b6b;
+        --text-mute:    #9a9388;
+        --accent:       #c96442;
     }
 
     html, body, [class*="css"] {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
                      "Helvetica Neue", Helvetica, Arial, sans-serif;
-        color: #e8e8e8;
+        color: var(--text);
+        font-feature-settings: "ss01", "cv11";
+        -webkit-font-smoothing: antialiased;
     }
 
-    .stApp {
-        background-color: var(--bg);
-        background-image:
-            radial-gradient(rgba(255,255,255,0.028) 1px, transparent 1px);
-        background-size: 22px 22px;
-    }
+    /* ---------- FUNDO SOLIDO (sem padrao) ---------- */
+    .stApp { background-color: var(--bg); }
 
     .block-container {
-        padding: 1.2rem 2rem 6rem 2rem !important;
+        padding: 1.4rem 2rem 8rem 2rem !important;
         max-width: 100% !important;
     }
 
-    h1, h2, h3, h4, h5, h6 { color: #ffffff !important; letter-spacing: -0.01em; }
-    p, span, li, label { color: #e8e8e8; font-size: 15px; line-height: 1.6; }
-    a { color: var(--accent-bright); text-decoration: none; }
+    /* ---------- TIPOGRAFIA ---------- */
+    h1, h2, h3, h4, h5, h6 {
+        color: var(--text) !important;
+        letter-spacing: -0.015em;
+        font-weight: 500;
+    }
+    p, span, li, label { color: var(--text); font-size: 15px; line-height: 1.65; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
 
+    /* ---------- HEADER ---------- */
     .ae-header {
         display: flex; align-items: center; justify-content: space-between;
-        padding: 0.25rem 0 1rem 0;
+        padding: 0 0 1rem 0;
         border-bottom: 1px solid var(--border-soft);
-        margin-bottom: 1.2rem;
+        margin-bottom: 1.4rem;
     }
     .ae-brand {
         font-family: Georgia, "Times New Roman", serif;
-        font-size: 20px; font-weight: 500; color: #ffffff;
+        font-size: 19px; font-weight: 500; color: var(--text);
         letter-spacing: -0.02em;
     }
     .ae-brand-sub {
-        font-size: 11px; color: var(--text-mute);
-        margin-left: 10px; letter-spacing: 0.02em;
+        font-size: 12px; color: var(--text-mute);
+        margin-left: 10px; letter-spacing: 0.01em;
     }
     .ae-status {
-        font-size: 10px; color: var(--text-mute);
-        letter-spacing: 0.12em; text-transform: uppercase;
+        font-size: 11px; color: var(--text-mute);
+        letter-spacing: 0.05em;
     }
 
-    /* ---------- CHAT MESSAGE ---------- */
+    /* ============================================================
+       CHAT MESSAGES — fluxo continuo, alinhado a esquerda
+       ============================================================ */
     [data-testid="stChatMessage"] {
         background: transparent !important;
         border: none !important;
         border-radius: 0 !important;
-        padding: 4px 0 !important;
-        margin-bottom: 6px !important;
+        padding: 6px 0 !important;
+        margin-bottom: 4px !important;
         box-shadow: none !important;
         display: flex !important;
-        align-items: flex-start !important;
-        gap: 10px !important;
-        animation: ae-fade-up 0.32s cubic-bezier(0.16, 1, 0.3, 1);
-    }
-
-    [data-testid="stChatMessage"] img {
-        width: 36px !important;
-        height: 36px !important;
-        min-width: 36px !important;
-        border-radius: 50% !important;
-        flex-shrink: 0;
-        object-fit: cover;
-    }
-
-    [data-testid="stChatMessageContent"] {
-        max-width: 82% !important;
-        padding: 10px 16px !important;
-        border-radius: 14px !important;
-        border: 1px solid var(--border-soft) !important;
-        position: relative;
-    }
-
-    /* ---------- USER (esquerda, cinza) ---------- */
-    [data-testid="stChatMessage"]:has(img[src*="useravatar"]) {
         flex-direction: row !important;
-        justify-content: flex-start !important;
+        align-items: flex-start !important;
+        gap: 0 !important;
+        animation: ae-fade 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    /* Esconde os avatares (mantidos no DOM apenas para selectors :has) */
+    [data-testid="stChatMessage"] img {
+        display: none !important;
+        width: 0 !important;
+        height: 0 !important;
+    }
+
+    /* Content container base */
+    [data-testid="stChatMessageContent"] {
+        flex: 1 1 auto !important;
+        max-width: 100% !important;
+        padding: 0 !important;
+        background: transparent !important;
+        border: none !important;
+        border-radius: 0 !important;
+    }
+
+    /* ---------- USER — bubble leve bege, alinhada a esquerda ---------- */
+    [data-testid="stChatMessage"]:has(img[src*="useravatar"]) {
+        margin-bottom: 16px !important;
     }
     [data-testid="stChatMessage"]:has(img[src*="useravatar"]) [data-testid="stChatMessageContent"] {
-        background: var(--bubble-user) !important;
-        color: var(--text-user) !important;
-        border-radius: 14px 14px 14px 4px !important;
+        background: var(--bg-user) !important;
+        border: 1px solid var(--border-soft) !important;
+        border-radius: 12px !important;
+        padding: 12px 18px !important;
+        max-width: 78% !important;
+        flex: 0 1 auto !important;
     }
     [data-testid="stChatMessage"]:has(img[src*="useravatar"]) p,
     [data-testid="stChatMessage"]:has(img[src*="useravatar"]) span,
     [data-testid="stChatMessage"]:has(img[src*="useravatar"]) li {
-        color: var(--text-user) !important;
+        color: var(--text) !important;
     }
 
-    /* ---------- ASSISTANT (direita, laranja) ---------- */
+    /* ---------- ASSISTANT — sem bubble, texto fluido ---------- */
     [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) {
-        flex-direction: row-reverse !important;
-        justify-content: flex-start !important;
+        margin-bottom: 22px !important;
     }
     [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stChatMessageContent"] {
-        background: var(--bubble-ai) !important;
-        color: var(--text-ai) !important;
-        border-color: rgba(201,100,66,0.22) !important;
-        border-radius: 14px 14px 4px 14px !important;
+        padding: 0 0 0 0 !important;
+    }
+    /* Label discreto acima da resposta do assistente */
+    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stChatMessageContent"]::before {
+        content: "Aether Engine";
+        display: block;
+        font-size: 12px;
+        color: var(--text-mute);
+        font-weight: 500;
+        letter-spacing: 0.01em;
+        margin-bottom: 6px;
     }
     [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) p,
     [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) span,
-    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) li,
+    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) li {
+        color: var(--text) !important;
+        font-size: 15px !important;
+        line-height: 1.7 !important;
+    }
     [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) h1,
     [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) h2,
     [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) h3 {
-        color: var(--text-ai) !important;
+        color: var(--text) !important;
+        margin-top: 1rem !important;
     }
 
-    /* ---------- CODE BLOCKS DO ASSISTENTE ---------- */
-    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stCode"],
-    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) pre {
-        background: var(--code-bg) !important;
-        border: 1px solid rgba(201,100,66,0.35) !important;
-        border-left: 3px solid var(--accent) !important;
-        border-radius: 8px !important;
-    }
-    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) pre code,
-    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stCode"] code {
-        background: transparent !important;
-        color: var(--accent-bright) !important;
-        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace !important;
-        font-size: 13px !important;
-    }
-    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) p code,
-    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) li code {
-        background: var(--code-bg) !important;
-        color: var(--accent-bright) !important;
-        padding: 2px 6px !important;
-        border-radius: 4px !important;
-        border: 1px solid rgba(201,100,66,0.25) !important;
-        font-size: 13px !important;
-    }
-
-    [data-testid="stChatMessage"]:has(img[src*="useravatar"]) pre,
-    [data-testid="stChatMessage"]:has(img[src*="useravatar"]) code {
-        background: #1a1a1a !important;
-        color: #d0d0d0 !important;
-    }
-
-    @keyframes ae-fade-up {
-        from { opacity: 0; transform: translateY(6px); }
+    @keyframes ae-fade {
+        from { opacity: 0; transform: translateY(4px); }
         to   { opacity: 1; transform: translateY(0); }
     }
 
-    /* ---------- THINKING ---------- */
-    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stExpander"] {
-        border: none !important;
+    /* ============================================================
+       CODE BLOCKS — padrao Claude (fundo claro, texto escuro)
+       ============================================================ */
+    [data-testid="stChatMessage"] [data-testid="stCode"],
+    [data-testid="stChatMessage"] pre {
+        background: var(--bg-code) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: 8px !important;
+    }
+    [data-testid="stChatMessage"] pre code,
+    [data-testid="stChatMessage"] [data-testid="stCode"] code {
         background: transparent !important;
-        margin-bottom: 8px !important;
+        color: var(--text) !important;
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace !important;
+        font-size: 13px !important;
+        line-height: 1.6 !important;
     }
-    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stExpander"] summary {
-        padding: 2px 0 !important;
-        font-size: 11px !important;
-        color: #8a7a6a !important;
-        font-weight: 500 !important;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
-        background: transparent !important;
-        transition: color 0.3s ease-in-out;
-    }
-    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stExpander"] summary:hover {
-        color: var(--accent-bright) !important;
-    }
-    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stExpander"] summary p {
-        font-size: 11px !important;
-        color: inherit !important;
-    }
-    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stExpanderDetails"] {
-        border-left: 2px solid rgba(201,100,66,0.3);
-        padding: 6px 0 6px 12px !important;
-        margin: 4px 0 10px 2px !important;
-    }
-    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stExpanderDetails"] p {
-        font-size: 12px !important;
-        color: #b8a090 !important;
-        line-height: 1.55;
-        font-style: italic;
+    [data-testid="stChatMessage"] p code,
+    [data-testid="stChatMessage"] li code {
+        background: var(--bg-code) !important;
+        color: var(--text) !important;
+        padding: 2px 6px !important;
+        border-radius: 4px !important;
+        border: 1px solid var(--border-soft) !important;
+        font-size: 13px !important;
     }
 
-    /* ---------- INPUT ---------- */
+    /* ============================================================
+       THINKING — linha fina, discreta, quase imperceptivel
+       ============================================================ */
+    [data-testid="stChatMessage"] [data-testid="stExpander"] {
+        border: none !important;
+        background: transparent !important;
+        border-radius: 0 !important;
+        margin: 0 0 8px 0 !important;
+        padding: 0 !important;
+    }
+    [data-testid="stChatMessage"] [data-testid="stExpander"] details {
+        border: none !important;
+        background: transparent !important;
+        padding: 0 !important;
+    }
+    [data-testid="stChatMessage"] [data-testid="stExpander"] summary {
+        padding: 2px 0 !important;
+        font-size: 12px !important;
+        color: var(--text-mute) !important;
+        font-weight: 400 !important;
+        letter-spacing: 0.01em;
+        background: transparent !important;
+        border: none !important;
+        list-style: none !important;
+        opacity: 0.7;
+        transition: opacity 0.25s ease, color 0.25s ease;
+    }
+    [data-testid="stChatMessage"] [data-testid="stExpander"] summary:hover {
+        opacity: 1;
+        color: var(--text-dim) !important;
+    }
+    [data-testid="stChatMessage"] [data-testid="stExpander"] summary p {
+        font-size: 12px !important;
+        color: inherit !important;
+        display: inline !important;
+    }
+    [data-testid="stChatMessage"] [data-testid="stExpander"] summary svg {
+        width: 10px !important;
+        height: 10px !important;
+        opacity: 0.6;
+        margin-right: 6px;
+    }
+    [data-testid="stChatMessage"] [data-testid="stExpanderDetails"] {
+        border-left: 1px solid var(--border) !important;
+        padding: 6px 0 6px 14px !important;
+        margin: 6px 0 12px 0 !important;
+        background: transparent !important;
+    }
+    [data-testid="stChatMessage"] [data-testid="stExpanderDetails"] p {
+        font-size: 13px !important;
+        color: var(--text-dim) !important;
+        line-height: 1.65;
+        font-style: italic;
+        opacity: 0.85;
+    }
+
+    /* ============================================================
+       CHAT INPUT — pilula flutuante, centrada
+       ============================================================ */
     [data-testid="stChatInput"] {
-        background: #1a1a1a !important;
+        max-width: 720px !important;
+        margin: 0 auto !important;
+        background: #ffffff !important;
         border: 1px solid var(--border) !important;
-        border-radius: 22px !important;
+        border-radius: 999px !important;
+        padding: 4px 8px !important;
+        box-shadow:
+            0 4px 16px rgba(0, 0, 0, 0.05),
+            0 1px 3px rgba(0, 0, 0, 0.04) !important;
         transition: all 0.3s ease-in-out;
     }
     [data-testid="stChatInput"]:focus-within {
         border-color: var(--accent) !important;
-        box-shadow: 0 0 0 3px rgba(201,100,66,0.12) !important;
+        box-shadow:
+            0 4px 20px rgba(201, 100, 66, 0.10),
+            0 0 0 3px rgba(201, 100, 66, 0.08) !important;
     }
     [data-testid="stChatInput"] textarea {
         background: transparent !important;
-        color: #e8e8e8 !important;
+        color: var(--text) !important;
         font-size: 15px !important;
+        padding: 8px 12px !important;
     }
     [data-testid="stChatInput"] textarea::placeholder {
-        color: #6a6a6a !important;
+        color: var(--text-mute) !important;
+    }
+    [data-testid="stChatInput"] button {
+        background: var(--text) !important;
+        color: var(--bg) !important;
+        border-radius: 999px !important;
     }
 
-    /* ---------- BUTTONS ---------- */
+    /* ============================================================
+       BOTOES GERAIS
+       ============================================================ */
     .stButton > button {
         background: transparent !important;
-        color: #b0b0b0 !important;
+        color: var(--text-dim) !important;
         border: 1px solid var(--border) !important;
-        border-radius: 10px !important;
+        border-radius: 8px !important;
         font-weight: 500 !important;
         font-size: 13px !important;
         padding: 0.4rem 0.9rem !important;
-        transition: all 0.3s ease-in-out !important;
+        transition: all 0.25s ease-in-out !important;
+        box-shadow: none !important;
     }
     .stButton > button:hover {
         border-color: var(--accent) !important;
-        color: var(--accent-bright) !important;
-        background: rgba(201,100,66,0.06) !important;
+        color: var(--accent) !important;
+        background: rgba(201, 100, 66, 0.04) !important;
     }
 
-    /* ---------- ARTIFACT PANEL ---------- */
+    /* ============================================================
+       ARTIFACT PANEL
+       ============================================================ */
     .ae-panel-header {
         display: flex; align-items: center; justify-content: space-between;
         padding-bottom: 10px;
@@ -360,13 +407,13 @@ st.markdown("""
         margin-bottom: 14px;
     }
     .ae-panel-title {
-        font-size: 11px; color: #a0a0a0;
-        font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase;
+        font-size: 12px; color: var(--text-dim);
+        font-weight: 500; letter-spacing: 0.02em;
     }
     .ae-panel-meta {
-        font-size: 10px; color: var(--text-mute);
+        font-size: 11px; color: var(--text-mute);
         font-family: ui-monospace, "SF Mono", Menlo, monospace;
-        letter-spacing: 0.04em;
+        letter-spacing: 0.02em;
     }
 
     iframe {
@@ -378,45 +425,51 @@ st.markdown("""
     .ae-empty {
         border: 1px dashed var(--border);
         border-radius: 10px;
-        padding: 50px 24px;
+        padding: 60px 24px;
         text-align: center;
         background: var(--bg-panel);
     }
     .ae-empty-title {
         font-family: Georgia, "Times New Roman", serif;
-        font-size: 15px; color: #d0d0d0;
+        font-size: 16px; color: var(--text-dim);
         margin-bottom: 8px; font-weight: 500;
     }
     .ae-empty-text {
-        font-size: 12px; color: var(--text-mute);
-        line-height: 1.6; max-width: 300px; margin: 0 auto;
+        font-size: 13px; color: var(--text-mute);
+        line-height: 1.6; max-width: 320px; margin: 0 auto;
     }
 
+    /* ---------- TYPING CURSOR ---------- */
     .ae-cursor {
         display: inline-block;
-        width: 2px; height: 1em;
-        background: var(--accent-bright);
+        width: 2px; height: 1.05em;
+        background: var(--text);
         vertical-align: text-bottom;
         margin-left: 2px;
         animation: ae-blink 1s step-start infinite;
+        opacity: 0.7;
     }
     @keyframes ae-blink { 50% { opacity: 0; } }
 
+    /* ---------- MISC ---------- */
     hr { border-color: var(--border-soft) !important; margin: 1rem 0 !important; }
+
     [data-testid="stCode"] {
         border-radius: 8px !important;
         border: 1px solid var(--border) !important;
     }
+
     .stAlert {
-        border-radius: 10px !important;
+        border-radius: 8px !important;
         border: 1px solid var(--border) !important;
-        background: #1a1a1a !important;
+        background: var(--bg-panel) !important;
+        color: var(--text) !important;
     }
 
     ::-webkit-scrollbar { width: 8px; height: 8px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-    ::-webkit-scrollbar-thumb:hover { background: #3a3a3a; }
+    ::-webkit-scrollbar-thumb { background: #dedbd3; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #c9c6be; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -507,7 +560,7 @@ def extract_artifact(text: str):
         svg = m.group(1).strip()
         wrapped = (
             "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-            "<style>html,body{margin:0;padding:0;background:#0a0a0a;}"
+            "<style>html,body{margin:0;padding:0;background:#fbfaf7;}"
             "body{display:flex;align-items:center;justify-content:center;"
             "min-height:100vh;}</style></head><body>"
             f"{svg}</body></html>"
@@ -545,7 +598,7 @@ st.markdown("""
 # ============================================================
 # LAYOUT
 # ============================================================
-col_chat, col_preview = st.columns([1.4, 1], gap="large")
+col_chat, col_preview = st.columns([1.35, 1], gap="large")
 
 
 # ------------------------------------------------------------
