@@ -2,12 +2,14 @@
 Aether Engine — AI workspace
 -----------------------------
 Layout: sidebar nativa + header + 2 colunas (chat | preview).
-Streaming roda dentro do chat_box. Logica intacta.
+Botao de download do artifact no header do preview.
 """
 
 import os
 import re
 import urllib.parse
+from datetime import datetime
+
 import streamlit as st
 import streamlit.components.v1 as components
 from openai import OpenAI
@@ -73,6 +75,7 @@ ICON_REFRESH = _svg('<path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5"/><path d="M
 ICON_IMAGE   = _svg('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/>', 44)
 ICON_MIC     = _svg('<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3"/>', 18)
 ICON_TRASH   = _svg('<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>', 16)
+ICON_DOWNLOAD= _svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>', 14)
 
 
 # ============================================================
@@ -259,6 +262,11 @@ def parse_response(raw: str) -> dict:
     }
 
 
+def _download_filename() -> str:
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return f"aether-artifact-{stamp}.html"
+
+
 # ============================================================
 # CSS
 # ============================================================
@@ -313,7 +321,6 @@ st.markdown("""
         background: transparent !important;
     }
 
-    /* ---------- ESCONDE HINT NATIVO DO FORM ---------- */
     [data-testid="InputInstructions"],
     [data-testid="stFormSubmitButton"] + small,
     [data-testid="stTextInput"] + small,
@@ -547,7 +554,7 @@ st.markdown("""
         text-transform: uppercase;
     }
     .panel-label-title { display: flex; align-items: center; gap: 8px; }
-    .panel-label-tools { display: flex; gap: 3px; }
+    .panel-label-tools { display: flex; gap: 3px; align-items: center; }
     .panel-tool {
         width: 28px;
         height: 28px;
@@ -564,6 +571,46 @@ st.markdown("""
         background: var(--panel);
         color: var(--accent) !important;
         text-decoration: none !important;
+    }
+
+    /* ---------- DOWNLOAD BUTTON (preview header) ---------- */
+    [data-testid="stDownloadButton"] {
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+    [data-testid="stDownloadButton"] > button {
+        background: var(--card) !important;
+        color: var(--text-dim) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: var(--radius-sm) !important;
+        font-size: 12px !important;
+        font-weight: 500 !important;
+        height: 28px !important;
+        min-height: 28px !important;
+        padding: 0 10px 0 8px !important;
+        width: 100% !important;
+        box-shadow: none !important;
+        transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        gap: 6px !important;
+        cursor: pointer !important;
+    }
+    [data-testid="stDownloadButton"] > button:hover {
+        border-color: var(--accent) !important;
+        color: var(--accent) !important;
+        background: rgba(201,100,66,.03) !important;
+    }
+    [data-testid="stDownloadButton"] > button:focus {
+        box-shadow: none !important;
+        outline: none !important;
+    }
+    [data-testid="stDownloadButton"] > button p {
+        color: inherit !important;
+        font-size: 12px !important;
+        margin: 0 !important;
+        white-space: nowrap !important;
     }
 
     /* ---------- CHAT ---------- */
@@ -1084,7 +1131,6 @@ with col_chat:
         unsafe_allow_html=True,
     )
 
-    # Resolve prompt pendente ANTES do loop
     _prompt = st.session_state.pending_prompt
     st.session_state.pending_prompt = None
 
@@ -1121,7 +1167,6 @@ with col_chat:
                     if msg.get("content"):
                         st.markdown(msg["content"])
 
-        # Streaming dentro do chat_box
         if _prompt:
             with st.chat_message("assistant", avatar=_AVATAR_AI):
 
@@ -1276,14 +1321,37 @@ with col_chat:
 # ------------------------------------------------------------
 with col_preview:
 
-    st.markdown(f"""
-    <div class="panel-label">
-        <span class="panel-label-title">Preview</span>
-        <div class="panel-label-tools">
-            <a class="panel-tool" href="?a=refresh" target="_self" title="Atualizar">{ICON_REFRESH}</a>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    # Header do preview: titulo | refresh | download
+    hdr_l, hdr_m, hdr_r = st.columns(
+        [4.5, 0.55, 1.6],
+        gap="small",
+        vertical_alignment="center",
+    )
+
+    with hdr_l:
+        st.markdown(
+            '<div class="panel-label" style="padding:0;margin:0;">'
+            '<span class="panel-label-title">Preview</span></div>',
+            unsafe_allow_html=True,
+        )
+
+    with hdr_m:
+        st.markdown(
+            f'<a class="panel-tool" href="?a=refresh" target="_self" '
+            f'title="Atualizar">{ICON_REFRESH}</a>',
+            unsafe_allow_html=True,
+        )
+
+    with hdr_r:
+        if st.session_state.current_artifact:
+            st.download_button(
+                label="Baixar HTML",
+                data=st.session_state.current_artifact,
+                file_name=_download_filename(),
+                mime="text/html",
+                use_container_width=True,
+                key="dl_artifact",
+            )
 
     preview_box = st.container(height=420)
 
@@ -1310,7 +1378,7 @@ with col_preview:
 
 
 # ============================================================
-# RERUN (fora de qualquer container)
+# RERUN
 # ============================================================
 if _do_rerun:
     st.rerun()
