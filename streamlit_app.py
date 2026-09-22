@@ -2,7 +2,7 @@
 Aether Engine — AI workspace
 -----------------------------
 Layout: sidebar nativa + header + 2 colunas (chat | preview).
-Apenas UI/UX reformulada. Logica de API, parsing e streaming intactas.
+Alturas relativas a viewport via CSS clamp(). Logica intacta.
 """
 
 import os
@@ -326,8 +326,25 @@ st.markdown("""
     }
 
     .block-container {
-        padding: 0.75rem 1.25rem 1rem 1.25rem !important;
+        padding: 0.5rem 1.25rem 0.4rem 1.25rem !important;
         max-width: 100% !important;
+    }
+
+    /* ============================================================
+       ALTURAS RELATIVAS A VIEWPORT
+       Substitui alturas fixas dos st.container(height=N).
+       clamp(min, ideal, max) evita estouro em telas pequenas
+       e desperdicio em telas grandes.
+       ============================================================ */
+    [data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stVerticalBlock"]) {
+        height: clamp(260px, 46vh, 560px) !important;
+        max-height: 560px !important;
+        min-height: 260px !important;
+        overflow: hidden !important;
+    }
+    [data-testid="stVerticalBlockBorderWrapper"] > div {
+        height: 100% !important;
+        overflow-y: auto !important;
     }
 
     /* ---------- SIDEBAR ---------- */
@@ -458,7 +475,7 @@ st.markdown("""
         background: var(--card);
         border: 1px solid var(--border);
         border-radius: var(--radius-md);
-        margin-bottom: 12px;
+        margin-bottom: 10px;
         box-shadow: var(--shadow-sm);
     }
     .app-header-left { display: flex; align-items: center; gap: 12px; }
@@ -514,7 +531,7 @@ st.markdown("""
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 2px 4px 10px 4px;
+        padding: 2px 4px 8px 4px;
         font-size: 11px;
         font-weight: 600;
         color: var(--text-mute);
@@ -696,9 +713,9 @@ st.markdown("""
         background: var(--card) !important;
         border: 1px solid var(--border) !important;
         border-radius: var(--radius-lg) !important;
-        padding: 8px 12px !important;
+        padding: 6px 10px !important;
         box-shadow: 0 2px 8px rgba(0,0,0,.04);
-        margin-top: 10px;
+        margin-top: 4px;
     }
     [data-testid="stForm"] > div > [data-testid="stVerticalBlock"] {
         gap: 0 !important;
@@ -820,8 +837,8 @@ st.markdown("""
         align-items: center;
         justify-content: center;
         text-align: center;
-        padding: 60px 24px;
-        min-height: 480px;
+        padding: 40px 24px;
+        min-height: 300px;
     }
     .preview-empty-icon {
         width: 78px;
@@ -961,6 +978,7 @@ st.markdown("""
     }
     ::-webkit-scrollbar-thumb:hover { background: #c9c6be; }
 
+    /* ---------- RESPONSIVO ---------- */
     @media (max-width: 900px) {
         section[data-testid="stSidebar"] {
             width: 180px !important;
@@ -968,7 +986,19 @@ st.markdown("""
             max-width: 180px !important;
         }
         .app-brand-tag { display: none; }
-        .preview-empty { min-height: 340px; padding: 40px 20px; }
+        .preview-empty { min-height: 240px; padding: 30px 20px; }
+    }
+
+    @media (max-height: 700px) {
+        [data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stVerticalBlock"]) {
+            height: 34vh !important;
+            min-height: 220px !important;
+            max-height: 400px !important;
+        }
+        .app-header { padding: 8px 16px; margin-bottom: 8px; }
+        .app-brand-mark { width: 28px; height: 28px; font-size: 15px; }
+        .app-brand-tag { display: none; }
+        .preview-empty { min-height: 200px; padding: 20px 16px; }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -1047,7 +1077,7 @@ with col_chat:
         unsafe_allow_html=True,
     )
 
-    chat_box = st.container(height=580)
+    chat_box = st.container(height=420)
 
     with chat_box:
         if not st.session_state.messages:
@@ -1134,13 +1164,13 @@ with col_preview:
     </div>
     """, unsafe_allow_html=True)
 
-    preview_box = st.container(height=640)
+    preview_box = st.container(height=420)
 
     with preview_box:
         if st.session_state.current_artifact:
             components.html(
                 st.session_state.current_artifact,
-                height=620,
+                height=380,
                 scrolling=True,
             )
         else:
