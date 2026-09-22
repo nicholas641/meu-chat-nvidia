@@ -1,11 +1,12 @@
 """
 Aether Engine
 -------------
-Workspace conversacional com renderizacao de artifacts em tempo real.
-Interface inspirada em sistemas modernos de chat com painel de preview.
+Chat com artifacts em tempo real. Layout inspirado em mensageria moderna:
+usuario a esquerda em cinza, assistente a direita em laranja.
 """
 
 import re
+import urllib.parse
 import streamlit as st
 import streamlit.components.v1 as components
 from openai import OpenAI
@@ -18,27 +19,43 @@ client = OpenAI(
     base_url="https://integrate.api.nvidia.com/v1",
     api_key="aura",
 )
-
 MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
 
 
 # ============================================================
-# CONSTANTES
+# AVATARES SVG (data URI com marcadores para CSS targeting)
 # ============================================================
-# GIF transparente 1x1 — usado como avatar vazio para nao renderizar emoji.
-_BLANK_AVATAR = (
-    "data:image/gif;base64,"
-    "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+_SVG_USER = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" '
+    'data-id="useravatar">'
+    '<circle cx="20" cy="20" r="20" fill="#2a2a2a"/>'
+    '<circle cx="20" cy="16" r="6.5" fill="#8a8a8a"/>'
+    '<path d="M7 37 Q20 24 33 37 Z" fill="#8a8a8a"/>'
+    '</svg>'
 )
 
-# System prompt: instrui o modelo a nao usar emojis e seguir contrato de tags.
+_SVG_AI = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" '
+    'data-id="aiavatar">'
+    '<circle cx="20" cy="20" r="20" fill="#c96442"/>'
+    '<text x="20" y="27" font-family="Georgia, serif" font-size="22" '
+    'fill="#fbfaf7" text-anchor="middle" font-weight="500">A</text>'
+    '</svg>'
+)
+
+_AVATAR_USER = "data:image/svg+xml;charset=utf-8," + urllib.parse.quote(_SVG_USER)
+_AVATAR_AI   = "data:image/svg+xml;charset=utf-8," + urllib.parse.quote(_SVG_AI)
+
+
+# ============================================================
+# SYSTEM PROMPT
+# ============================================================
 SYSTEM_PROMPT = """You are Aether Engine, a professional technical assistant.
 
 Strict rules:
 1. Never use emojis or emoticons in your responses.
 2. Be concise, technical, and direct. No filler, no friendly slang.
-3. Respond in the same language the user writes in. If the user writes in
-   Portuguese, respond in formal Brazilian Portuguese.
+3. Respond in the same language the user writes in.
 4. When the user requests a UI component, visual, animation, or HTML/CSS/JS/SVG
    output, wrap the complete code inside <artifact>...</artifact> tags.
    The content must be a full standalone HTML document (with <!DOCTYPE html>).
@@ -67,7 +84,7 @@ st.set_page_config(
 
 
 # ============================================================
-# CSS — PALETA E ESTETICA CLAUDE
+# CSS
 # ============================================================
 st.markdown("""
 <style>
@@ -84,110 +101,175 @@ st.markdown("""
 
     /* ---------- TOKENS ---------- */
     :root {
-        --bg:          #fbfaf7;
-        --bg-panel:    #f5f4ed;
-        --bg-bubble:   #f0eee6;
-        --border:      #e8e6de;
-        --border-soft: #efece4;
-        --text:        #1a1a1a;
-        --text-dim:    #6b6b6b;
-        --text-mute:   #9a9a9a;
-        --accent:      #c96442;
+        --bg:             #0a0a0a;
+        --bg-panel:       #141414;
+        --bubble-user:    #2a2a2a;
+        --bubble-ai:      #1a1a1a;
+        --text-user:      #e8e8e8;
+        --text-ai:        #e8a87c;
+        --text-mute:      #7a7a7a;
+        --border:         #252525;
+        --border-soft:    #1e1e1e;
+        --accent:         #c96442;
+        --accent-bright:  #ffb87a;
+        --code-bg:        #2a1810;
     }
 
     html, body, [class*="css"] {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
                      "Helvetica Neue", Helvetica, Arial, sans-serif;
-        color: var(--text);
-        font-feature-settings: "ss01", "cv11";
+        color: #e8e8e8;
     }
 
-    .stApp { background: var(--bg); }
+    /* ---------- BACKGROUND COM PADRAO DE PONTOS ---------- */
+    .stApp {
+        background-color: var(--bg);
+        background-image:
+            radial-gradient(rgba(255,255,255,0.028) 1px, transparent 1px);
+        background-size: 22px 22px;
+    }
 
     .block-container {
-        padding: 1.5rem 2rem 6rem 2rem !important;
+        padding: 1.2rem 2rem 6rem 2rem !important;
         max-width: 100% !important;
     }
 
     /* ---------- TYPOGRAPHY ---------- */
-    h1, h2, h3, h4, h5, h6 {
-        color: var(--text) !important;
-        letter-spacing: -0.02em;
-        font-weight: 500;
-    }
-    p, span, li, label {
-        color: var(--text);
-        font-size: 15px;
-        line-height: 1.65;
-    }
-    a { color: var(--accent); text-decoration: none; }
+    h1, h2, h3, h4, h5, h6 { color: #ffffff !important; letter-spacing: -0.01em; }
+    p, span, li, label { color: #e8e8e8; font-size: 15px; line-height: 1.6; }
+    a { color: var(--accent-bright); text-decoration: none; }
 
     /* ---------- BRAND HEADER ---------- */
     .ae-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 0.25rem 0 1.1rem 0;
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 0.25rem 0 1rem 0;
         border-bottom: 1px solid var(--border-soft);
-        margin-bottom: 1.5rem;
+        margin-bottom: 1.2rem;
     }
     .ae-brand {
         font-family: Georgia, "Times New Roman", serif;
-        font-size: 22px;
-        font-weight: 500;
-        color: var(--text);
+        font-size: 20px; font-weight: 500; color: #ffffff;
         letter-spacing: -0.02em;
     }
     .ae-brand-sub {
-        font-size: 12px;
-        color: var(--text-mute);
-        margin-left: 12px;
-        letter-spacing: 0.02em;
+        font-size: 11px; color: var(--text-mute);
+        margin-left: 10px; letter-spacing: 0.02em;
     }
     .ae-status {
-        font-size: 11px;
-        color: var(--text-mute);
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
+        font-size: 10px; color: var(--text-mute);
+        letter-spacing: 0.12em; text-transform: uppercase;
     }
 
-    /* ---------- CHAT MESSAGES ---------- */
+    /* ============================================================
+       CHAT MESSAGE — WHATSAPP STYLE
+       ============================================================ */
     [data-testid="stChatMessage"] {
         background: transparent !important;
         border: none !important;
         border-radius: 0 !important;
-        padding: 10px 0 !important;
-        margin-bottom: 10px !important;
+        padding: 4px 0 !important;
+        margin-bottom: 6px !important;
         box-shadow: none !important;
-        animation: ae-fade-up 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+        display: flex !important;
+        align-items: flex-start !important;
+        gap: 10px !important;
+        animation: ae-fade-up 0.32s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
-    [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) {
-        background: var(--bg-bubble) !important;
+    /* ---------- AVATAR ---------- */
+    [data-testid="stChatMessage"] img {
+        width: 36px !important;
+        height: 36px !important;
+        min-width: 36px !important;
+        border-radius: 50% !important;
+        flex-shrink: 0;
+        object-fit: cover;
+    }
+
+    /* ---------- CONTENT BUBBLE (base) ---------- */
+    [data-testid="stChatMessageContent"] {
+        max-width: 82% !important;
+        padding: 10px 16px !important;
         border-radius: 14px !important;
-        padding: 12px 18px !important;
-        margin-left: 18% !important;
         border: 1px solid var(--border-soft) !important;
+        position: relative;
     }
 
-    /* ---------- AVATAR SUPPRESSION (hardened) ---------- */
-    [data-testid="stChatMessage"] > div > img,
-    [data-testid="stChatMessage"] > img,
-    [data-testid="stChatMessage"] img,
-    [data-testid="stChatMessage"] [data-testid*="Avatar"],
-    [data-testid="stChatMessage"] [data-testid*="avatar"],
-    [data-testid="stChatMessage"] [class*="Avatar"],
-    [data-testid="stChatMessage"] [class*="avatar"],
-    [data-testid="chatAvatarIcon-user"],
-    [data-testid="chatAvatarIcon-assistant"] {
-        display: none !important;
-        visibility: hidden !important;
-        width: 0 !important;
-        height: 0 !important;
-        min-width: 0 !important;
-        padding: 0 !important;
-        margin: 0 !important;
-        opacity: 0 !important;
+    /* ============================================================
+       USER MESSAGE — ESQUERDA, CINZA
+       ============================================================ */
+    [data-testid="stChatMessage"]:has(img[src*="useravatar"]) {
+        flex-direction: row !important;
+        justify-content: flex-start !important;
+    }
+    [data-testid="stChatMessage"]:has(img[src*="useravatar"]) [data-testid="stChatMessageContent"] {
+        background: var(--bubble-user) !important;
+        color: var(--text-user) !important;
+        border-radius: 14px 14px 14px 4px !important;
+    }
+    [data-testid="stChatMessage"]:has(img[src*="useravatar"]) p,
+    [data-testid="stChatMessage"]:has(img[src*="useravatar"]) span,
+    [data-testid="stChatMessage"]:has(img[src*="useravatar"]) li {
+        color: var(--text-user) !important;
+    }
+
+    /* ============================================================
+       ASSISTANT MESSAGE — DIREITA, LARANJA
+       ============================================================ */
+    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) {
+        flex-direction: row-reverse !important;
+        justify-content: flex-start !important;
+    }
+    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stChatMessageContent"] {
+        background: var(--bubble-ai) !important;
+        color: var(--text-ai) !important;
+        border-color: rgba(201,100,66,0.22) !important;
+        border-radius: 14px 14px 4px 14px !important;
+    }
+    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) p,
+    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) span,
+    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) li,
+    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) h1,
+    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) h2,
+    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) h3 {
+        color: var(--text-ai) !important;
+    }
+
+    /* ============================================================
+       CODE BLOCKS DO ASSISTENTE — LARANJA ESCURO (estilo Claude)
+       ============================================================ */
+    /* Bloco de codigo (multiline) */
+    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stCode"],
+    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) pre {
+        background: var(--code-bg) !important;
+        border: 1px solid rgba(201,100,66,0.35) !important;
+        border-left: 3px solid var(--accent) !important;
+        border-radius: 8px !important;
+    }
+    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) pre code,
+    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stCode"] code {
+        background: transparent !important;
+        color: var(--accent-bright) !important;
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace !important;
+        font-size: 13px !important;
+    }
+
+    /* Codigo inline */
+    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) p code,
+    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) li code {
+        background: var(--code-bg) !important;
+        color: var(--accent-bright) !important;
+        padding: 2px 6px !important;
+        border-radius: 4px !important;
+        border: 1px solid rgba(201,100,66,0.25) !important;
+        font-size: 13px !important;
+    }
+
+    /* Code blocks do usuario - manter neutro */
+    [data-testid="stChatMessage"]:has(img[src*="useravatar"]) pre,
+    [data-testid="stChatMessage"]:has(img[src*="useravatar"]) code {
+        background: #1a1a1a !important;
+        color: #d0d0d0 !important;
     }
 
     @keyframes ae-fade-up {
@@ -196,166 +278,144 @@ st.markdown("""
     }
 
     /* ---------- THINKING BAR ---------- */
-    [data-testid="stExpander"] {
+    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stExpander"] {
         border: none !important;
         background: transparent !important;
-        border-radius: 0 !important;
-        margin-bottom: 6px !important;
+        margin-bottom: 8px !important;
     }
-    [data-testid="stExpander"] details {
-        border: none !important;
-        background: transparent !important;
-    }
-    [data-testid="stExpander"] summary {
-        padding: 4px 0 !important;
-        font-size: 12px !important;
-        color: var(--text-mute) !important;
+    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stExpander"] summary {
+        padding: 2px 0 !important;
+        font-size: 11px !important;
+        color: #8a7a6a !important;
         font-weight: 500 !important;
-        letter-spacing: 0.01em;
-        transition: color 0.3s ease-in-out;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
         background: transparent !important;
-        border: none !important;
+        transition: color 0.3s ease-in-out;
     }
-    [data-testid="stExpander"] summary:hover {
-        color: var(--text-dim) !important;
+    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stExpander"] summary:hover {
+        color: var(--accent-bright) !important;
     }
-    [data-testid="stExpander"] summary p {
-        font-size: 12px !important;
+    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stExpander"] summary p {
+        font-size: 11px !important;
         color: inherit !important;
     }
-    [data-testid="stExpander"] [data-testid="stExpanderDetails"] {
-        border-left: 2px solid var(--border-soft);
-        padding: 8px 0 8px 14px !important;
-        margin: 4px 0 12px 2px !important;
+    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stExpanderDetails"] {
+        border-left: 2px solid rgba(201,100,66,0.3);
+        padding: 6px 0 6px 12px !important;
+        margin: 4px 0 10px 2px !important;
     }
-    [data-testid="stExpander"] [data-testid="stExpanderDetails"] p {
-        font-size: 13px !important;
-        color: var(--text-dim) !important;
-        line-height: 1.6;
+    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stExpanderDetails"] p {
+        font-size: 12px !important;
+        color: #b8a090 !important;
+        line-height: 1.55;
         font-style: italic;
     }
 
     /* ---------- CHAT INPUT ---------- */
     [data-testid="stChatInput"] {
-        background: #ffffff !important;
+        background: #1a1a1a !important;
         border: 1px solid var(--border) !important;
-        border-radius: 14px !important;
+        border-radius: 22px !important;
         transition: all 0.3s ease-in-out;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.02) !important;
     }
     [data-testid="stChatInput"]:focus-within {
         border-color: var(--accent) !important;
-        box-shadow: 0 0 0 3px rgba(201,100,66,0.08) !important;
+        box-shadow: 0 0 0 3px rgba(201,100,66,0.12) !important;
     }
     [data-testid="stChatInput"] textarea {
         background: transparent !important;
-        color: var(--text) !important;
+        color: #e8e8e8 !important;
         font-size: 15px !important;
-        border-radius: 14px !important;
     }
     [data-testid="stChatInput"] textarea::placeholder {
-        color: var(--text-mute) !important;
+        color: #6a6a6a !important;
     }
 
     /* ---------- BUTTONS ---------- */
     .stButton > button {
         background: transparent !important;
-        color: var(--text-dim) !important;
+        color: #b0b0b0 !important;
         border: 1px solid var(--border) !important;
         border-radius: 10px !important;
         font-weight: 500 !important;
         font-size: 13px !important;
         padding: 0.4rem 0.9rem !important;
         transition: all 0.3s ease-in-out !important;
-        box-shadow: none !important;
     }
     .stButton > button:hover {
         border-color: var(--accent) !important;
-        color: var(--accent) !important;
-        background: rgba(201,100,66,0.04) !important;
+        color: var(--accent-bright) !important;
+        background: rgba(201,100,66,0.06) !important;
     }
 
     /* ---------- ARTIFACT PANEL ---------- */
     .ae-panel-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
+        display: flex; align-items: center; justify-content: space-between;
         padding-bottom: 10px;
         border-bottom: 1px solid var(--border-soft);
         margin-bottom: 14px;
     }
     .ae-panel-title {
-        font-size: 12px;
-        color: var(--text-dim);
-        font-weight: 500;
-        letter-spacing: 0.02em;
+        font-size: 11px; color: #a0a0a0;
+        font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase;
     }
     .ae-panel-meta {
-        font-size: 11px;
-        color: var(--text-mute);
+        font-size: 10px; color: var(--text-mute);
         font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        letter-spacing: 0.04em;
     }
 
     iframe {
         border: 1px solid var(--border) !important;
-        border-radius: 12px !important;
+        border-radius: 10px !important;
         background: #ffffff !important;
-        transition: all 0.3s ease-in-out;
     }
 
     .ae-empty {
         border: 1px dashed var(--border);
-        border-radius: 12px;
-        padding: 60px 24px;
+        border-radius: 10px;
+        padding: 50px 24px;
         text-align: center;
         background: var(--bg-panel);
     }
     .ae-empty-title {
         font-family: Georgia, "Times New Roman", serif;
-        font-size: 17px;
-        color: var(--text);
-        margin-bottom: 8px;
-        font-weight: 500;
+        font-size: 15px; color: #d0d0d0;
+        margin-bottom: 8px; font-weight: 500;
     }
     .ae-empty-text {
-        font-size: 13px;
-        color: var(--text-mute);
-        line-height: 1.6;
-        max-width: 340px;
-        margin: 0 auto;
+        font-size: 12px; color: var(--text-mute);
+        line-height: 1.6; max-width: 300px; margin: 0 auto;
     }
 
     /* ---------- TYPING CURSOR ---------- */
     .ae-cursor {
         display: inline-block;
-        width: 2px;
-        height: 1em;
-        background: var(--text);
+        width: 2px; height: 1em;
+        background: var(--accent-bright);
         vertical-align: text-bottom;
         margin-left: 2px;
         animation: ae-blink 1s step-start infinite;
     }
-    @keyframes ae-blink {
-        50% { opacity: 0; }
-    }
+    @keyframes ae-blink { 50% { opacity: 0; } }
 
     /* ---------- MISC ---------- */
     hr { border-color: var(--border-soft) !important; margin: 1rem 0 !important; }
-
     [data-testid="stCode"] {
-        border-radius: 10px !important;
+        border-radius: 8px !important;
         border: 1px solid var(--border) !important;
     }
-
     .stAlert {
         border-radius: 10px !important;
         border: 1px solid var(--border) !important;
+        background: #1a1a1a !important;
     }
 
     ::-webkit-scrollbar { width: 8px; height: 8px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-    ::-webkit-scrollbar-thumb:hover { background: var(--text-mute); }
+    ::-webkit-scrollbar-thumb:hover { background: #3a3a3a; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -372,23 +432,23 @@ if "artifact_lang" not in st.session_state:
 
 
 # ============================================================
-# EMOJI SANITIZER — cinto e suspensorio para o conteudo do modelo
+# EMOJI SANITIZER
 # ============================================================
 _EMOJI_RE = re.compile(
     "["
-    "\U0001F600-\U0001F64F"  # emoticons
-    "\U0001F300-\U0001F5FF"  # symbols & pictographs
-    "\U0001F680-\U0001F6FF"  # transport & map
-    "\U0001F1E0-\U0001F1FF"  # flags
-    "\U00002700-\U000027BF"  # dingbats
-    "\U0001F900-\U0001F9FF"  # supplemental
+    "\U0001F600-\U0001F64F"
+    "\U0001F300-\U0001F5FF"
+    "\U0001F680-\U0001F6FF"
+    "\U0001F1E0-\U0001F1FF"
+    "\U00002700-\U000027BF"
+    "\U0001F900-\U0001F9FF"
     "\U0001FA00-\U0001FA6F"
     "\U0001FA70-\U0001FAFF"
-    "\U00002600-\U000026FF"  # misc symbols
+    "\U00002600-\U000026FF"
     "\U0001F700-\U0001F77F"
-    "\U0000FE00-\U0000FE0F"  # variation selectors
+    "\U0000FE00-\U0000FE0F"
     "\U00002B00-\U00002BFF"
-    "\U00002190-\U000021FF"  # arrows used as decor
+    "\U00002190-\U000021FF"
     "]+",
     flags=re.UNICODE,
 )
@@ -398,20 +458,19 @@ def strip_emojis(text: str) -> str:
     if not text:
         return text
     cleaned = _EMOJI_RE.sub("", text)
-    # Colapsa espacos duplos deixados pela remocao
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     cleaned = re.sub(r" +\n", "\n", cleaned)
     return cleaned
 
 
 # ============================================================
-# PARSING — thinking, artifact, sanitizacao de stream parcial
+# PARSING
 # ============================================================
-_THINK_RE     = re.compile(r"<thinking>(.*?)</thinking>", re.DOTALL | re.IGNORECASE)
-_ARTIFACT_RE  = re.compile(r"<artifact[^>]*>(.*?)</artifact>", re.DOTALL | re.IGNORECASE)
-_HTML_BLOCK   = re.compile(r"```html\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
-_SVG_BLOCK    = re.compile(r"```svg\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
-_DANGLING_RE  = re.compile(r"<(thinking|artifact)\b[^>]*>(?![^<]*</\1>)", re.IGNORECASE)
+_THINK_RE    = re.compile(r"<thinking>(.*?)</thinking>", re.DOTALL | re.IGNORECASE)
+_ARTIFACT_RE = re.compile(r"<artifact[^>]*>(.*?)</artifact>", re.DOTALL | re.IGNORECASE)
+_HTML_BLOCK  = re.compile(r"```html\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
+_SVG_BLOCK   = re.compile(r"```svg\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
+_DANGLING_RE = re.compile(r"<(thinking|artifact)\b[^>]*>(?![^<]*</\1>)", re.IGNORECASE)
 
 
 def _strip_dangling(text: str) -> str:
@@ -447,7 +506,7 @@ def extract_artifact(text: str):
         svg = m.group(1).strip()
         wrapped = (
             "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-            "<style>html,body{margin:0;padding:0;background:#fbfaf7;}"
+            "<style>html,body{margin:0;padding:0;background:#0a0a0a;}"
             "body{display:flex;align-items:center;justify-content:center;"
             "min-height:100vh;}</style></head><body>"
             f"{svg}</body></html>"
@@ -477,15 +536,15 @@ st.markdown("""
     <span class="ae-brand">Aether Engine</span>
     <span class="ae-brand-sub">conversational workspace</span>
   </div>
-  <div class="ae-status">preview enabled</div>
+  <div class="ae-status">online</div>
 </div>
 """, unsafe_allow_html=True)
 
 
 # ============================================================
-# LAYOUT — DUAS COLUNAS
+# LAYOUT
 # ============================================================
-col_chat, col_preview = st.columns([1, 1], gap="large")
+col_chat, col_preview = st.columns([1.4, 1], gap="large")
 
 
 # ------------------------------------------------------------
@@ -507,10 +566,10 @@ with col_preview:
     else:
         preview_slot.markdown("""
         <div class="ae-empty">
-          <div class="ae-empty-title">Nada para visualizar ainda</div>
+          <div class="ae-empty-title">Nada renderizado</div>
           <div class="ae-empty-text">
-            Peca a IA para criar uma interface, um componente ou um SVG.
-            O resultado aparecera aqui automaticamente, em tempo real.
+            Peca a IA para gerar uma interface, componente ou SVG.
+            O resultado aparece aqui em tempo real.
           </div>
         </div>
         """, unsafe_allow_html=True)
@@ -524,26 +583,26 @@ with col_chat:
     # ---- Historico ----
     for msg in st.session_state.messages:
         if msg["role"] == "user":
-            with st.chat_message("user", avatar=_BLANK_AVATAR):
+            with st.chat_message("user", avatar=_AVATAR_USER):
                 st.markdown(msg["content"])
         else:
-            with st.chat_message("assistant", avatar=_BLANK_AVATAR):
+            with st.chat_message("assistant", avatar=_AVATAR_AI):
                 if msg.get("thinking"):
-                    with st.expander("Processando raciocinio..."):
+                    with st.expander("Processando raciocinio"):
                         st.markdown(msg["thinking"])
                 if msg.get("content"):
                     st.markdown(msg["content"])
 
     # ---- Input + streaming ----
-    if prompt := st.chat_input("Envie uma mensagem para o Aether Engine..."):
+    if prompt := st.chat_input("Envie uma mensagem..."):
 
         st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user", avatar=_BLANK_AVATAR):
+        with st.chat_message("user", avatar=_AVATAR_USER):
             st.markdown(prompt)
 
-        with st.chat_message("assistant", avatar=_BLANK_AVATAR):
+        with st.chat_message("assistant", avatar=_AVATAR_AI):
 
-            thinking_slot = st.expander("Processando raciocinio...", expanded=False)
+            thinking_slot = st.expander("Processando raciocinio", expanded=False)
             with thinking_slot:
                 thinking_body = st.empty()
 
@@ -553,9 +612,6 @@ with col_chat:
             reasoning_accum = ""
 
             try:
-                # ============================================================
-                # API CALL — system prompt + historico
-                # ============================================================
                 api_messages = (
                     [{"role": "system", "content": SYSTEM_PROMPT}]
                     + st.session_state.messages
@@ -606,7 +662,6 @@ with col_chat:
                                 unsafe_allow_html=True,
                             )
 
-                # ---- Parse final ----
                 parsed = parse_response(raw_buffer)
                 final_thinking = "\n\n".join(
                     filter(None, [reasoning_accum, parsed["thinking"]])
