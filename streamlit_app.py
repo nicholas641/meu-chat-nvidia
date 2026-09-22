@@ -40,7 +40,7 @@ MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
 
 
 # ============================================================
-# AVATARES INVISIVEIS (para targeting CSS)
+# AVATARES INVISIVEIS
 # ============================================================
 _SVG_USER = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" '
@@ -141,13 +141,13 @@ if _action:
         st.session_state.messages = []
         st.session_state.current_artifact = None
         st.session_state.artifact_lang = None
-        st.toast("Nova conversa iniciada", icon="✓")
+        st.toast("Nova conversa iniciada", icon=":material/check_circle:")
 
     elif _action == "refresh":
         _cur = st.session_state.current_artifact
         st.session_state.current_artifact = None
         st.session_state.current_artifact = _cur
-        st.toast("Preview atualizado", icon="✓")
+        st.toast("Preview atualizado", icon=":material/refresh:")
 
     elif _action == "example":
         st.session_state.pending_prompt = (
@@ -158,15 +158,18 @@ if _action:
         )
 
     elif _action == "mic":
-        st.toast("Gravacao de audio nao esta disponivel neste ambiente.", icon="!")
+        st.toast(
+            "Gravacao de audio nao esta disponivel neste ambiente.",
+            icon=":material/mic_off:",
+        )
 
     elif _action in ("projects", "history", "settings"):
-        st.toast("Modulo em desenvolvimento.", icon="!")
+        st.toast("Modulo em desenvolvimento.", icon=":material/construction:")
 
     elif _action == "clear_attach":
         st.session_state.attached_name = None
         st.session_state.attached_text = None
-        st.toast("Anexo removido", icon="✓")
+        st.toast("Anexo removido", icon=":material/delete:")
 
     elif _action == "clear_chat":
         st.session_state.messages = []
@@ -267,7 +270,6 @@ st.markdown("""
 
 st.markdown("""
 <style>
-    /* ---------- FORCE LIGHT ---------- */
     :root, html, body {
         color-scheme: light !important;
     }
@@ -278,7 +280,6 @@ st.markdown("""
         --primary-color: #c96442 !important;
     }
 
-    /* ---------- TOKENS ---------- */
     :root {
         --bg:           #fafaf9;
         --card:         #ffffff;
@@ -298,7 +299,6 @@ st.markdown("""
         --radius-lg:    14px;
     }
 
-    /* ---------- HIDE STREAMLIT CHROME ---------- */
     #MainMenu { visibility: hidden; }
     footer { display: none !important; visibility: hidden; }
     [data-testid="stToolbar"],
@@ -313,7 +313,6 @@ st.markdown("""
         background: transparent !important;
     }
 
-    /* ---------- TYPOGRAPHY ---------- */
     html, body, [class*="css"], .stApp {
         font-family: 'Inter', -apple-system, BlinkMacSystemFont,
                      "Segoe UI", Roboto, sans-serif !important;
@@ -322,20 +321,16 @@ st.markdown("""
         text-rendering: optimizeLegibility;
     }
 
-    /* ---------- APP BACKGROUND ---------- */
     .stApp, [data-testid="stAppViewContainer"] {
         background-color: var(--bg) !important;
     }
 
-    /* ---------- MAIN CONTAINER ---------- */
     .block-container {
         padding: 0.75rem 1.25rem 1rem 1.25rem !important;
         max-width: 100% !important;
     }
 
-    /* ============================================================
-       SIDEBAR
-       ============================================================ */
+    /* ---------- SIDEBAR ---------- */
     section[data-testid="stSidebar"] {
         width: 220px !important;
         min-width: 220px !important;
@@ -345,21 +340,14 @@ st.markdown("""
     }
     section[data-testid="stSidebar"] > div:first-child {
         padding: 1rem 0.85rem !important;
-        height: 100vh;
-        display: flex;
-        flex-direction: column;
     }
     section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
         gap: 0.15rem !important;
-    }
-    section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
-        width: 100%;
     }
     [data-testid="stSidebarCollapseButton"],
     [data-testid="stSidebarCollapseButton"] button,
     button[kind="header"] { display: none !important; }
 
-    /* Brand */
     .sb-brand {
         display: flex;
         align-items: center;
@@ -396,7 +384,6 @@ st.markdown("""
         letter-spacing: 0.02em;
     }
 
-    /* Sidebar section label */
     .sb-section {
         font-size: 10px;
         font-weight: 600;
@@ -406,7 +393,6 @@ st.markdown("""
         padding: 14px 8px 6px 8px;
     }
 
-    /* Sidebar buttons (as anchor tags) */
     .sb-btn {
         display: flex !important;
         align-items: center;
@@ -427,14 +413,10 @@ st.markdown("""
         color: var(--text) !important;
         text-decoration: none !important;
     }
-    .sb-btn svg {
-        flex-shrink: 0;
-        opacity: 0.75;
-    }
+    .sb-btn svg { flex-shrink: 0; opacity: 0.75; }
     .sb-btn:hover svg { opacity: 1; }
     .sb-btn span { color: inherit; }
 
-    /* Primary sidebar button */
     .sb-btn-primary {
         background: var(--accent);
         color: #ffffff !important;
@@ -447,14 +429,10 @@ st.markdown("""
     }
     .sb-btn-primary svg { opacity: 1; }
 
-    .sb-spacer { flex: 1; min-height: 20px; }
-
-    /* ---------- GLOBAL TEXT COLORS ---------- */
     .stApp p, .stApp span, .stApp li, .stApp label, .stApp div {
         color: var(--text);
     }
 
-    /* ---------- INPUTS (dark-mode override) ---------- */
     input, textarea,
     [data-testid="stTextInput"] input,
     [data-testid="stTextArea"] textarea,
@@ -471,9 +449,7 @@ st.markdown("""
         opacity: 1 !important;
     }
 
-    /* ============================================================
-       APP HEADER
-       ============================================================ */
+    /* ---------- APP HEADER ---------- */
     .app-header {
         display: flex;
         align-items: center;
@@ -485,11 +461,7 @@ st.markdown("""
         margin-bottom: 12px;
         box-shadow: var(--shadow-sm);
     }
-    .app-header-left {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-    }
+    .app-header-left { display: flex; align-items: center; gap: 12px; }
     .app-brand-mark {
         width: 34px;
         height: 34px;
@@ -515,7 +487,6 @@ st.markdown("""
     .app-brand-tag {
         font-size: 11.5px;
         color: var(--text-mute);
-        letter-spacing: 0.005em;
         margin-top: 1px;
     }
     .app-status {
@@ -529,7 +500,6 @@ st.markdown("""
         font-size: 12px;
         font-weight: 500;
         color: var(--text-dim);
-        letter-spacing: 0.01em;
     }
     .app-status-dot {
         width: 7px;
@@ -539,9 +509,7 @@ st.markdown("""
         box-shadow: 0 0 0 3px rgba(107,169,68,.15);
     }
 
-    /* ============================================================
-       PANEL LABELS
-       ============================================================ */
+    /* ---------- PANEL LABELS ---------- */
     .panel-label {
         display: flex;
         align-items: center;
@@ -573,9 +541,7 @@ st.markdown("""
         text-decoration: none !important;
     }
 
-    /* ============================================================
-       CHAT AREA
-       ============================================================ */
+    /* ---------- CHAT ---------- */
     [data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stVerticalBlock"]) {
         background: var(--card) !important;
         border: 1px solid var(--border) !important;
@@ -584,7 +550,6 @@ st.markdown("""
         padding: 4px 18px !important;
     }
 
-    /* Messages base */
     [data-testid="stChatMessage"] {
         background: transparent !important;
         border: none !important;
@@ -612,7 +577,6 @@ st.markdown("""
         border-radius: 0 !important;
     }
 
-    /* User message — bubble a direita */
     [data-testid="stChatMessage"]:has(img[src*="useravatar"]) {
         flex-direction: row-reverse !important;
         margin: 6px 0 12px 0 !important;
@@ -626,7 +590,6 @@ st.markdown("""
         flex: 0 1 auto !important;
     }
 
-    /* Assistant message — fluxo esquerdo */
     [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) {
         margin-bottom: 16px !important;
     }
@@ -640,7 +603,6 @@ st.markdown("""
         margin-bottom: 8px;
     }
 
-    /* Message text */
     [data-testid="stChatMessage"] p,
     [data-testid="stChatMessage"] span,
     [data-testid="stChatMessage"] li {
@@ -654,7 +616,6 @@ st.markdown("""
         to   { opacity: 1; transform: translateY(0); }
     }
 
-    /* ---------- CODE BLOCKS ---------- */
     [data-testid="stChatMessage"] [data-testid="stCode"],
     [data-testid="stChatMessage"] pre {
         background: var(--bg-code) !important;
@@ -679,7 +640,6 @@ st.markdown("""
         font-size: 12.5px !important;
     }
 
-    /* ---------- THINKING ---------- */
     [data-testid="stChatMessage"] [data-testid="stExpander"] {
         border: none !important;
         background: transparent !important;
@@ -731,9 +691,7 @@ st.markdown("""
         opacity: 0.9;
     }
 
-    /* ============================================================
-       COMPOSER
-       ============================================================ */
+    /* ---------- COMPOSER ---------- */
     [data-testid="stForm"] {
         background: var(--card) !important;
         border: 1px solid var(--border) !important;
@@ -771,7 +729,6 @@ st.markdown("""
         opacity: 1 !important;
     }
 
-    /* Composer popover button — SVG injected via background-image */
     [data-testid="stForm"] [data-testid="stPopover"] > button {
         width: 40px !important;
         height: 40px !important;
@@ -793,7 +750,6 @@ st.markdown("""
         border-color: var(--accent) !important;
     }
 
-    /* Composer submit button — SVG arrow */
     [data-testid="stForm"] [data-testid="stFormSubmitButton"] button {
         background: var(--accent) !important;
         color: #ffffff !important;
@@ -815,7 +771,6 @@ st.markdown("""
         transform: translateY(-1px);
     }
 
-    /* Mic link inside composer */
     .composer-mic {
         width: 40px !important;
         height: 40px !important;
@@ -836,7 +791,6 @@ st.markdown("""
         text-decoration: none !important;
     }
 
-    /* ---------- ATTACH CHIP ---------- */
     .attach-chip {
         display: inline-flex;
         align-items: center;
@@ -859,9 +813,7 @@ st.markdown("""
     }
     .attach-chip a:hover { color: var(--accent) !important; }
 
-    /* ============================================================
-       PREVIEW
-       ============================================================ */
+    /* ---------- PREVIEW ---------- */
     .preview-empty {
         display: flex;
         flex-direction: column;
@@ -918,14 +870,12 @@ st.markdown("""
         text-decoration: none !important;
     }
 
-    /* iframe */
     iframe {
         border: 1px solid var(--border) !important;
         border-radius: var(--radius-sm) !important;
         background: #ffffff !important;
     }
 
-    /* ---------- CURSOR ---------- */
     .cursor {
         display: inline-block;
         width: 2px;
@@ -938,9 +888,7 @@ st.markdown("""
     }
     @keyframes blink { 50% { opacity: 0; } }
 
-    /* ============================================================
-       GENERIC BUTTONS
-       ============================================================ */
+    /* ---------- GENERIC BUTTONS ---------- */
     .stButton > button {
         background: var(--card) !important;
         color: var(--text-dim) !important;
@@ -961,7 +909,6 @@ st.markdown("""
     .stButton > button:focus { box-shadow: none !important; outline: none !important; }
     .stButton > button p { color: inherit !important; margin: 0 !important; }
 
-    /* Popovers (outside composer) */
     [data-testid="stPopover"] > button {
         background: var(--card) !important;
         color: var(--text-dim) !important;
@@ -977,7 +924,6 @@ st.markdown("""
     }
     [data-testid="stPopoverBody"] * { color: var(--text) !important; }
 
-    /* File uploader */
     [data-testid="stFileUploader"] section {
         background: var(--panel) !important;
         border: 1px dashed var(--border) !important;
@@ -990,7 +936,6 @@ st.markdown("""
         border: 1px solid var(--border) !important;
     }
 
-    /* Alerts */
     .stAlert {
         border-radius: var(--radius-sm) !important;
         border: 1px solid var(--border) !important;
@@ -999,7 +944,6 @@ st.markdown("""
     }
     .stAlert * { color: var(--text) !important; }
 
-    /* Toast */
     [data-testid="stToast"] {
         background: var(--card) !important;
         border: 1px solid var(--border) !important;
@@ -1009,7 +953,6 @@ st.markdown("""
     }
     [data-testid="stToast"] * { color: var(--text) !important; }
 
-    /* ---------- SCROLLBAR ---------- */
     ::-webkit-scrollbar { width: 8px; height: 8px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb {
@@ -1018,7 +961,6 @@ st.markdown("""
     }
     ::-webkit-scrollbar-thumb:hover { background: #c9c6be; }
 
-    /* ---------- RESPONSIVE ---------- */
     @media (max-width: 900px) {
         section[data-testid="stSidebar"] {
             width: 180px !important;
@@ -1057,8 +999,6 @@ with st.sidebar:
         {ICON_HISTORY}<span>Historico</span>
     </a>
 
-    <div class="sb-spacer"></div>
-
     <div class="sb-section">Sistema</div>
     <a class="sb-btn" href="?a=settings" target="_self">
         {ICON_GEAR}<span>Configuracoes</span>
@@ -1090,7 +1030,7 @@ st.markdown("""
 
 
 # ============================================================
-# LAYOUT — 2 COLUNAS (chat | preview)
+# LAYOUT
 # ============================================================
 col_chat, col_preview = st.columns([1, 1.15], gap="medium")
 
@@ -1129,7 +1069,6 @@ with col_chat:
                     if msg.get("content"):
                         st.markdown(msg["content"])
 
-    # Chip de anexo ativo
     if st.session_state.attached_name:
         st.markdown(
             f'<div class="attach-chip">'
@@ -1139,7 +1078,6 @@ with col_chat:
             unsafe_allow_html=True,
         )
 
-    # Composer
     with st.form("composer", clear_on_submit=True):
         c1, c2, c3, c4 = st.columns(
             [0.35, 6, 0.35, 0.7],
