@@ -5,6 +5,7 @@ Chat com artifacts em tempo real. Layout inspirado em mensageria moderna:
 usuario a esquerda em cinza, assistente a direita em laranja.
 """
 
+import os
 import re
 import urllib.parse
 import streamlit as st
@@ -13,17 +14,36 @@ from openai import OpenAI
 
 
 # ============================================================
+# API KEY — st.secrets > env var
+# ============================================================
+def _load_api_key() -> str:
+    try:
+        if "NVIDIA_API_KEY" in st.secrets:
+            return st.secrets["NVIDIA_API_KEY"]
+    except Exception:
+        pass
+    key = os.getenv("NVIDIA_API_KEY")
+    if key:
+        return key
+    st.error(
+        "Chave de API nao configurada. Defina NVIDIA_API_KEY em "
+        "st.secrets ou como variavel de ambiente."
+    )
+    st.stop()
+
+
+# ============================================================
 # CLIENT
 # ============================================================
 client = OpenAI(
     base_url="https://integrate.api.nvidia.com/v1",
-    api_key="aura",
+    api_key=_load_api_key(),
 )
 MODEL = "nvidia/nemotron-3-ultra-550b-a55b"
 
 
 # ============================================================
-# AVATARES SVG (data URI com marcadores para CSS targeting)
+# AVATARES SVG
 # ============================================================
 _SVG_USER = (
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" '
@@ -121,7 +141,6 @@ st.markdown("""
         color: #e8e8e8;
     }
 
-    /* ---------- BACKGROUND COM PADRAO DE PONTOS ---------- */
     .stApp {
         background-color: var(--bg);
         background-image:
@@ -134,12 +153,10 @@ st.markdown("""
         max-width: 100% !important;
     }
 
-    /* ---------- TYPOGRAPHY ---------- */
     h1, h2, h3, h4, h5, h6 { color: #ffffff !important; letter-spacing: -0.01em; }
     p, span, li, label { color: #e8e8e8; font-size: 15px; line-height: 1.6; }
     a { color: var(--accent-bright); text-decoration: none; }
 
-    /* ---------- BRAND HEADER ---------- */
     .ae-header {
         display: flex; align-items: center; justify-content: space-between;
         padding: 0.25rem 0 1rem 0;
@@ -160,9 +177,7 @@ st.markdown("""
         letter-spacing: 0.12em; text-transform: uppercase;
     }
 
-    /* ============================================================
-       CHAT MESSAGE — WHATSAPP STYLE
-       ============================================================ */
+    /* ---------- CHAT MESSAGE ---------- */
     [data-testid="stChatMessage"] {
         background: transparent !important;
         border: none !important;
@@ -176,7 +191,6 @@ st.markdown("""
         animation: ae-fade-up 0.32s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
-    /* ---------- AVATAR ---------- */
     [data-testid="stChatMessage"] img {
         width: 36px !important;
         height: 36px !important;
@@ -186,7 +200,6 @@ st.markdown("""
         object-fit: cover;
     }
 
-    /* ---------- CONTENT BUBBLE (base) ---------- */
     [data-testid="stChatMessageContent"] {
         max-width: 82% !important;
         padding: 10px 16px !important;
@@ -195,9 +208,7 @@ st.markdown("""
         position: relative;
     }
 
-    /* ============================================================
-       USER MESSAGE — ESQUERDA, CINZA
-       ============================================================ */
+    /* ---------- USER (esquerda, cinza) ---------- */
     [data-testid="stChatMessage"]:has(img[src*="useravatar"]) {
         flex-direction: row !important;
         justify-content: flex-start !important;
@@ -213,9 +224,7 @@ st.markdown("""
         color: var(--text-user) !important;
     }
 
-    /* ============================================================
-       ASSISTANT MESSAGE — DIREITA, LARANJA
-       ============================================================ */
+    /* ---------- ASSISTANT (direita, laranja) ---------- */
     [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) {
         flex-direction: row-reverse !important;
         justify-content: flex-start !important;
@@ -235,10 +244,7 @@ st.markdown("""
         color: var(--text-ai) !important;
     }
 
-    /* ============================================================
-       CODE BLOCKS DO ASSISTENTE — LARANJA ESCURO (estilo Claude)
-       ============================================================ */
-    /* Bloco de codigo (multiline) */
+    /* ---------- CODE BLOCKS DO ASSISTENTE ---------- */
     [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stCode"],
     [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) pre {
         background: var(--code-bg) !important;
@@ -253,8 +259,6 @@ st.markdown("""
         font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace !important;
         font-size: 13px !important;
     }
-
-    /* Codigo inline */
     [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) p code,
     [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) li code {
         background: var(--code-bg) !important;
@@ -265,7 +269,6 @@ st.markdown("""
         font-size: 13px !important;
     }
 
-    /* Code blocks do usuario - manter neutro */
     [data-testid="stChatMessage"]:has(img[src*="useravatar"]) pre,
     [data-testid="stChatMessage"]:has(img[src*="useravatar"]) code {
         background: #1a1a1a !important;
@@ -277,7 +280,7 @@ st.markdown("""
         to   { opacity: 1; transform: translateY(0); }
     }
 
-    /* ---------- THINKING BAR ---------- */
+    /* ---------- THINKING ---------- */
     [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stExpander"] {
         border: none !important;
         background: transparent !important;
@@ -312,7 +315,7 @@ st.markdown("""
         font-style: italic;
     }
 
-    /* ---------- CHAT INPUT ---------- */
+    /* ---------- INPUT ---------- */
     [data-testid="stChatInput"] {
         background: #1a1a1a !important;
         border: 1px solid var(--border) !important;
@@ -389,7 +392,6 @@ st.markdown("""
         line-height: 1.6; max-width: 300px; margin: 0 auto;
     }
 
-    /* ---------- TYPING CURSOR ---------- */
     .ae-cursor {
         display: inline-block;
         width: 2px; height: 1em;
@@ -400,7 +402,6 @@ st.markdown("""
     }
     @keyframes ae-blink { 50% { opacity: 0; } }
 
-    /* ---------- MISC ---------- */
     hr { border-color: var(--border-soft) !important; margin: 1rem 0 !important; }
     [data-testid="stCode"] {
         border-radius: 8px !important;
@@ -548,7 +549,7 @@ col_chat, col_preview = st.columns([1.4, 1], gap="large")
 
 
 # ------------------------------------------------------------
-# COLUNA DIREITA — ARTIFACT PREVIEW
+# COLUNA DIREITA — PREVIEW
 # ------------------------------------------------------------
 with col_preview:
     st.markdown("""
@@ -580,7 +581,6 @@ with col_preview:
 # ------------------------------------------------------------
 with col_chat:
 
-    # ---- Historico ----
     for msg in st.session_state.messages:
         if msg["role"] == "user":
             with st.chat_message("user", avatar=_AVATAR_USER):
@@ -593,7 +593,6 @@ with col_chat:
                 if msg.get("content"):
                     st.markdown(msg["content"])
 
-    # ---- Input + streaming ----
     if prompt := st.chat_input("Envie uma mensagem..."):
 
         st.session_state.messages.append({"role": "user", "content": prompt})
