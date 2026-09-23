@@ -547,7 +547,7 @@ IFRAME_HEIGHT = 580
 
 
 # ============================================================
-# CSS — Claude-like UI + fix do texto branco no composer
+# CSS — Claude-like UI + fix do input escuro
 # ============================================================
 st.markdown("""
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -584,7 +584,6 @@ st.markdown("""
         --radius-md:    12px;
         --radius-lg:    18px;
         --panel-h:      640px;
-        --chat-max:     720px;
     }
 
     #MainMenu { visibility: hidden; }
@@ -629,26 +628,44 @@ st.markdown("""
     }
 
     /* ============================================================
-       FIX DO TEXTO BRANCO — aplica em TODOS os inputs / textareas
-       do app, sem depender do tema do SO/navegador.
+       FIX DO INPUT ESCURO — ataca input, wrapper e container
        ============================================================ */
     input,
     textarea,
     [contenteditable],
-    [data-testid="stTextInput"] input,
+    [data-testid="stTextInput"],
+    [data-testid="stTextInput"] > div,
+    [data-testid="stTextInput"] > div > div,
+    [data-testid="stTextInputRootElement"],
+    [data-testid="stTextArea"],
+    [data-testid="stTextArea"] > div,
     [data-testid="stTextArea"] textarea,
-    [data-baseweb="input"] input,
-    [data-baseweb="textarea"] textarea,
+    [data-baseweb="input"],
+    [data-baseweb="input"] > div,
+    [data-baseweb="base-input"],
+    [data-baseweb="textarea"],
     [data-baseweb="base-input"] input,
+    [data-baseweb="textarea"] textarea,
     .stTextInput input,
     .stTextArea textarea,
     .stNumberInput input,
-    .stChatInput textarea,
     section[data-testid="stSidebar"] input {
+        background-color: #ffffff !important;
         color: #1f1e1c !important;
         -webkit-text-fill-color: #1f1e1c !important;
         caret-color: #c96442 !important;
     }
+
+    /* Composer: deixa transparente (pill proprio) */
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stTextInput"],
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stTextInput"] > div,
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stTextInput"] > div > div,
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-baseweb="input"],
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-baseweb="base-input"],
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stTextInput"] input {
+        background-color: transparent !important;
+    }
+
     input::placeholder,
     textarea::placeholder,
     [data-baseweb="input"] input::placeholder,
@@ -656,6 +673,16 @@ st.markdown("""
         color: #9a978e !important;
         -webkit-text-fill-color: #9a978e !important;
         opacity: 1 !important;
+    }
+
+    /* Forca card branco nos wrappers que o dark theme pinta */
+    [data-testid="stForm"],
+    [data-testid="stVerticalBlockBorderWrapper"] > div,
+    [data-testid="stSidebarContent"] {
+        background-color: #ffffff !important;
+    }
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) {
+        background-color: #ffffff !important;
     }
 
     /* markdown geral */
@@ -691,7 +718,7 @@ st.markdown("""
     }
 
     /* ============================================================
-       SIDEBAR (Claude-like)
+       SIDEBAR
        ============================================================ */
     section[data-testid="stSidebar"] {
         width: 248px !important;
@@ -714,7 +741,7 @@ st.markdown("""
         font-size: 13px !important;
         height: 34px !important;
         padding: 4px 12px !important;
-        background: var(--card) !important;
+        background: #ffffff !important;
         border: 1px solid var(--border-soft) !important;
         border-radius: var(--radius-sm) !important;
     }
@@ -767,7 +794,7 @@ st.markdown("""
     .sb-btn-primary svg { opacity: 1; }
 
     /* ============================================================
-       HEADER — bem mais discreto, quase ausente
+       HEADER discreto
        ============================================================ */
     .app-header {
         display: flex; align-items: center; justify-content: space-between;
@@ -843,7 +870,7 @@ st.markdown("""
     }
 
     /* ============================================================
-       DOWNLOAD BUTTON
+       DOWNLOAD
        ============================================================ */
     [data-testid="stDownloadButton"] { margin: 0 !important; padding: 0 !important; }
     [data-testid="stDownloadButton"] > button {
@@ -872,7 +899,7 @@ st.markdown("""
     }
 
     /* ============================================================
-       CHAT — Claude-like
+       CHAT
        ============================================================ */
     [data-testid="stChatMessage"] {
         background: transparent !important;
@@ -894,7 +921,6 @@ st.markdown("""
         border: none !important; border-radius: 0 !important;
     }
 
-    /* user */
     [data-testid="stChatMessage"]:has(img[src*="useravatar"]) {
         flex-direction: row-reverse !important;
         margin: 4px 0 24px 0 !important;
@@ -907,7 +933,6 @@ st.markdown("""
         max-width: 78% !important; flex: 0 1 auto !important;
     }
 
-    /* assistant */
     [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) {
         margin-bottom: 22px !important;
     }
@@ -925,7 +950,6 @@ st.markdown("""
         to   { opacity: 1; transform: translateY(0); }
     }
 
-    /* ---- Acoes de mensagem ---- */
     .msg-actions {
         display: flex; gap: 14px; align-items: center;
         margin-top: 8px; opacity: 0;
@@ -957,7 +981,6 @@ st.markdown("""
         border-radius: 50%; background: var(--accent);
     }
 
-    /* ---- Form inline de edicao ---- */
     [data-testid="stChatMessage"] [data-testid="stForm"] {
         background: var(--card) !important;
         border: 1px solid var(--accent) !important;
@@ -972,7 +995,6 @@ st.markdown("""
         background: var(--bg) !important;
     }
 
-    /* ---- Code blocks dentro do chat ---- */
     [data-testid="stChatMessage"] [data-testid="stCode"],
     [data-testid="stChatMessage"] pre,
     .stCodeBlock pre {
@@ -989,7 +1011,6 @@ st.markdown("""
         font-size: 12.5px !important; line-height: 1.6 !important;
     }
 
-    /* ---- Expander (thinking) ---- */
     [data-testid="stChatMessage"] [data-testid="stExpander"] {
         border: none !important; background: transparent !important;
         margin: 0 0 10px 0 !important; padding: 0 !important;
@@ -1025,7 +1046,7 @@ st.markdown("""
     }
 
     /* ============================================================
-       COMPOSER — pill flutuante, Claude-like
+       COMPOSER pill
        ============================================================ */
     [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) {
         background: var(--card) !important;
@@ -1071,7 +1092,7 @@ st.markdown("""
         background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%239a978e' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21.4 11l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5'/%3E%3C/svg%3E") !important;
         background-repeat: no-repeat !important;
         background-position: center !important;
-        transition: background-color 0.15s ease, border-color 0.15s ease !important;
+        transition: background-color 0.15s ease !important;
     }
     [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stPopover"] > button:hover {
         background-color: var(--panel) !important;
@@ -1085,7 +1106,7 @@ st.markdown("""
         width: 40px !important; height: 40px !important; min-width: 40px !important;
         padding: 0 !important; font-size: 0 !important;
         box-shadow: 0 1px 2px rgba(201,100,66,.25) !important;
-        transition: background-color 0.15s ease, transform 0.15s ease !important;
+        transition: background-color 0.15s ease !important;
         background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5M5 12l7-7 7 7'/%3E%3C/svg%3E") !important;
         background-repeat: no-repeat !important;
         background-position: center !important;
@@ -1147,7 +1168,7 @@ st.markdown("""
     }
 
     /* ============================================================
-       PREVIEW vazio
+       PREVIEW
        ============================================================ */
     .preview-empty {
         display: flex; flex-direction: column;
@@ -1277,7 +1298,6 @@ st.markdown("""
     .stButton > button:focus { box-shadow: none !important; outline: none !important; }
     .stButton > button p { color: inherit !important; margin: 0 !important; }
 
-    /* form submit de outros forms (settings/editar/etc) */
     [data-testid="stFormSubmitButton"] button {
         background: var(--card) !important;
         color: var(--text-dim) !important;
@@ -1470,7 +1490,7 @@ with st.sidebar:
 
 
 # ============================================================
-# APP HEADER (discreto)
+# APP HEADER
 # ============================================================
 st.markdown("""
 <div class="app-header">
@@ -1489,7 +1509,7 @@ st.markdown("""
 
 
 # ============================================================
-# PAINEIS: HISTORICO / PROJETOS / CONFIGURACOES
+# PAINEIS
 # ============================================================
 def _hist_row_html(c: dict, show_pin: bool = True) -> str:
     pin_cls = "hist-action pinned" if c.get("pinned") else "hist-action"
