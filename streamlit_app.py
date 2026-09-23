@@ -76,6 +76,10 @@ ICON_IMAGE   = _svg('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx
 ICON_MIC     = _svg('<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3"/>', 18)
 ICON_TRASH   = _svg('<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>', 16)
 ICON_DOWNLOAD= _svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>', 14)
+ICON_EDIT    = _svg('<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4z"/>', 15)
+ICON_STOP    = _svg('<rect x="6" y="6" width="12" height="12" rx="2"/>', 14)
+ICON_BACK    = _svg('<path d="M15 18l-6-6 6-6"/>', 14)
+ICON_NEXT    = _svg('<path d="M9 18l6-6-6-6"/>', 14)
 
 
 # ============================================================
@@ -118,15 +122,21 @@ st.set_page_config(
 # SESSION STATE
 # ============================================================
 _DEFAULTS = {
-    "messages":         [],
-    "current_artifact": None,
-    "artifact_lang":    None,
-    "pending_prompt":   None,
-    "temperature":      1.0,
-    "top_p":            0.95,
-    "max_tokens":       8192,
-    "attached_name":    None,
-    "attached_text":    None,
+    "messages":             [],
+    "current_artifact":     None,
+    "artifact_lang":        None,
+    "artifact_versions":    [],   # lista de dicts {code, lang, ts, prompt}
+    "artifact_version_idx": -1,
+    "artifact_edit_mode":   False,
+    "pending_prompt":       None,
+    "temperature":          1.0,
+    "top_p":                0.95,
+    "max_tokens":           8192,
+    "attached_name":        None,
+    "attached_text":        None,
+    "editing_idx":          None,  # indice de mensagem sendo editada
+    "stop_requested":       False,
+    "search_query":         "",
 }
 for k, v in _DEFAULTS.items():
     if k not in st.session_state:
@@ -137,6 +147,7 @@ for k, v in _DEFAULTS.items():
 # QUERY PARAM ROUTER
 # ============================================================
 _action = st.query_params.get("a")
+_idx_qp = st.query_params.get("i")
 if _action:
     st.query_params.clear()
 
@@ -144,6 +155,10 @@ if _action:
         st.session_state.messages = []
         st.session_state.current_artifact = None
         st.session_state.artifact_lang = None
+        st.session_state.artifact_versions = []
+        st.session_state.artifact_version_idx = -1
+        st.session_state.artifact_edit_mode = False
+        st.session_state.editing_idx = None
         st.toast("Nova conversa iniciada", icon=":material/check_circle:")
 
     elif _action == "refresh":
@@ -177,7 +192,60 @@ if _action:
     elif _action == "clear_chat":
         st.session_state.messages = []
         st.session_state.current_artifact = None
+        st.session_state.artifact_versions = []
+        st.session_state.artifact_version_idx = -1
+        st.session_state.editing_idx = None
         st.rerun()
+
+    # ---- Edicao de mensagem ----
+    elif _action == "edit" and _idx_qp is not None:
+        try:
+            st.session_state.editing_idx = int(_idx_qp)
+        except ValueError:
+            st.session_state.editing_idx = None
+
+    elif _action == "cancel_edit":
+        st.session_state.editing_idx = None
+
+    # ---- Regenerar ----
+    elif _action == "regen":
+        msgs = st.session_state.messages
+        # remove ultima resposta do assistente
+        if msgs and msgs[-1]["role"] == "assistant":
+            msgs.pop()
+        # a ultima deve ser um prompt do usuario — reenvia
+        if msgs and msgs[-1]["role"] == "user":
+            last_user = msgs.pop()
+            st.session_state.pending_prompt = last_user["content"]
+        st.rerun()
+
+    # ---- Navegacao de versoes do artifact ----
+    elif _action == "artifact_prev":
+        if st.session_state.artifact_versions:
+            i = st.session_state.artifact_version_idx - 1
+            if i < 0:
+                i = len(st.session_state.artifact_versions) - 1
+            st.session_state.artifact_version_idx = i
+            v = st.session_state.artifact_versions[i]
+            st.session_state.current_artifact = v["code"]
+            st.session_state.artifact_lang = v["lang"]
+
+    elif _action == "artifact_next":
+        if st.session_state.artifact_versions:
+            i = (st.session_state.artifact_version_idx + 1) % len(
+                st.session_state.artifact_versions
+            )
+            st.session_state.artifact_version_idx = i
+            v = st.session_state.artifact_versions[i]
+            st.session_state.current_artifact = v["code"]
+            st.session_state.artifact_lang = v["lang"]
+
+    # ---- Modo edicao do artifact ----
+    elif _action == "toggle_artifact_edit":
+        st.session_state.artifact_edit_mode = not st.session_state.artifact_edit_mode
+
+    elif _action == "cancel_artifact_edit":
+        st.session_state.artifact_edit_mode = False
 
 
 # ============================================================
@@ -232,20 +300,29 @@ def _detect_lang(code: str) -> str:
 
 
 def extract_artifact(text: str):
-    # Procura por <artifact> ou <Artifact> (ignora maiúsculas/minúsculas)
-    m = re.search(r'<(artifact|Artifact)[^>]*>(.*?)</\1>', text, re.DOTALL)
-    if m:
-        code = m.group(2).strip()
-        return text.strip(), code, "html"
-
-    # Se a IA usar o bloco padrão de programação markdown ```html, captura também!
-    m = re.search(r"```html\s*\n(.*?)```", text, re.DOTALL | re.IGNORECASE)
+    m = _ARTIFACT_RE.search(text)
     if m:
         code = m.group(1).strip()
-        return text.strip(), code, "html"
+        return _ARTIFACT_RE.sub("", text).strip(), code, _detect_lang(code)
+
+    m = _HTML_BLOCK.search(text)
+    if m:
+        code = m.group(1).strip()
+        return _HTML_BLOCK.sub("", text).strip(), code, "html"
+
+    m = _SVG_BLOCK.search(text)
+    if m:
+        svg = m.group(1).strip()
+        wrapped = (
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            "<style>html,body{margin:0;padding:0;background:#fbfaf7;}"
+            "body{display:flex;align-items:center;justify-content:center;"
+            "min-height:100vh;}</style></head><body>"
+            f"{svg}</body></html>"
+        )
+        return _SVG_BLOCK.sub("", text).strip(), wrapped, "svg"
 
     return text.strip(), None, None
-
 
 
 def parse_response(raw: str) -> dict:
@@ -267,8 +344,8 @@ def _download_filename() -> str:
 # ============================================================
 # CONSTANTES DE LAYOUT
 # ============================================================
-PANEL_HEIGHT = 610          # altura fixa dos paineis (chat e preview)
-IFRAME_HEIGHT = 560         # altura do iframe dentro do preview
+PANEL_HEIGHT = 610
+IFRAME_HEIGHT = 560
 
 
 # ============================================================
@@ -282,16 +359,13 @@ st.markdown("""
 
 st.markdown("""
 <style>
-    :root, html, body {
-        color-scheme: light !important;
-    }
+    :root, html, body { color-scheme: light !important; }
     :root {
         --background-color: #fafaf9 !important;
         --text-color: #1a1a1a !important;
         --secondary-background-color: #ffffff !important;
         --primary-color: #c96442 !important;
     }
-
     :root {
         --bg:           #fafaf9;
         --card:         #ffffff;
@@ -386,6 +460,15 @@ st.markdown("""
     [data-testid="stSidebarCollapseButton"] button,
     button[kind="header"] { display: none !important; }
 
+    section[data-testid="stSidebar"] [data-testid="stTextInput"] input {
+        font-size: 12.5px !important;
+        height: 32px !important;
+        padding: 4px 10px !important;
+        background: var(--panel) !important;
+        border: 1px solid var(--border-soft) !important;
+        border-radius: var(--radius-sm) !important;
+    }
+
     .sb-brand {
         display: flex;
         align-items: center;
@@ -395,62 +478,39 @@ st.markdown("""
         border-bottom: 1px solid var(--border-soft);
     }
     .sb-brand-mark {
-        width: 32px;
-        height: 32px;
+        width: 32px; height: 32px;
         background: var(--accent);
         color: #ffffff;
         border-radius: var(--radius-md);
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        display: flex; align-items: center; justify-content: center;
         font-family: Georgia, "Times New Roman", serif;
-        font-size: 17px;
-        font-weight: 500;
+        font-size: 17px; font-weight: 500;
         flex-shrink: 0;
         box-shadow: 0 2px 6px rgba(201,100,66,.22);
     }
     .sb-brand-info { display: flex; flex-direction: column; line-height: 1.15; }
-    .sb-brand-name {
-        font-size: 13.5px;
-        font-weight: 600;
-        color: var(--text);
-        letter-spacing: -0.01em;
-    }
-    .sb-brand-tag {
-        font-size: 10.5px;
-        color: var(--text-mute);
-        letter-spacing: 0.02em;
-    }
+    .sb-brand-name { font-size: 13.5px; font-weight: 600; color: var(--text); letter-spacing: -0.01em; }
+    .sb-brand-tag  { font-size: 10.5px; color: var(--text-mute); letter-spacing: 0.02em; }
 
     .sb-section {
-        font-size: 10px;
-        font-weight: 600;
+        font-size: 10px; font-weight: 600;
         color: var(--text-mute);
-        letter-spacing: 0.09em;
-        text-transform: uppercase;
+        letter-spacing: 0.09em; text-transform: uppercase;
         padding: 14px 8px 6px 8px;
     }
 
     .sb-btn {
         display: flex !important;
-        align-items: center;
-        gap: 10px;
-        padding: 8px 10px;
-        margin: 1px 0;
+        align-items: center; gap: 10px;
+        padding: 8px 10px; margin: 1px 0;
         border-radius: var(--radius-sm);
         color: var(--text-dim) !important;
-        font-size: 13px;
-        font-weight: 500;
+        font-size: 13px; font-weight: 500;
         text-decoration: none !important;
         transition: background-color 0.15s ease, color 0.15s ease;
-        cursor: pointer;
-        line-height: 1.2;
+        cursor: pointer; line-height: 1.2;
     }
-    .sb-btn:hover {
-        background: var(--panel);
-        color: var(--text) !important;
-        text-decoration: none !important;
-    }
+    .sb-btn:hover { background: var(--panel); color: var(--text) !important; }
     .sb-btn svg { flex-shrink: 0; opacity: 0.75; }
     .sb-btn:hover svg { opacity: 1; }
     .sb-btn span { color: inherit; }
@@ -461,15 +521,10 @@ st.markdown("""
         box-shadow: 0 1px 3px rgba(201,100,66,.25);
         margin-bottom: 4px;
     }
-    .sb-btn-primary:hover {
-        background: var(--accent-hover);
-        color: #ffffff !important;
-    }
+    .sb-btn-primary:hover { background: var(--accent-hover); color: #ffffff !important; }
     .sb-btn-primary svg { opacity: 1; }
 
-    .stApp p, .stApp span, .stApp li, .stApp label, .stApp div {
-        color: var(--text);
-    }
+    .stApp p, .stApp span, .stApp li, .stApp label, .stApp div { color: var(--text); }
 
     input, textarea,
     [data-testid="stTextInput"] input,
@@ -489,9 +544,7 @@ st.markdown("""
 
     /* ---------- APP HEADER ---------- */
     .app-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
+        display: flex; align-items: center; justify-content: space-between;
         padding: 12px 20px;
         background: var(--card);
         border: 1px solid var(--border);
@@ -501,89 +554,81 @@ st.markdown("""
     }
     .app-header-left { display: flex; align-items: center; gap: 12px; }
     .app-brand-mark {
-        width: 34px;
-        height: 34px;
-        background: var(--accent);
-        color: #ffffff;
+        width: 34px; height: 34px;
+        background: var(--accent); color: #ffffff;
         border-radius: var(--radius-md);
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        display: flex; align-items: center; justify-content: center;
         font-family: Georgia, "Times New Roman", serif;
-        font-size: 18px;
-        font-weight: 500;
+        font-size: 18px; font-weight: 500;
         box-shadow: 0 2px 6px rgba(201,100,66,.22);
         flex-shrink: 0;
     }
     .app-brand-info { line-height: 1.15; }
-    .app-brand-name {
-        font-size: 15px;
-        font-weight: 600;
-        color: var(--text);
-        letter-spacing: -0.015em;
-    }
-    .app-brand-tag {
-        font-size: 11.5px;
-        color: var(--text-mute);
-        margin-top: 1px;
-    }
+    .app-brand-name { font-size: 15px; font-weight: 600; color: var(--text); letter-spacing: -0.015em; }
+    .app-brand-tag  { font-size: 11.5px; color: var(--text-mute); margin-top: 1px; }
     .app-status {
-        display: inline-flex;
-        align-items: center;
-        gap: 7px;
+        display: inline-flex; align-items: center; gap: 7px;
         padding: 6px 12px;
         background: var(--panel);
         border: 1px solid var(--border-soft);
         border-radius: 999px;
-        font-size: 12px;
-        font-weight: 500;
+        font-size: 12px; font-weight: 500;
         color: var(--text-dim);
     }
     .app-status-dot {
-        width: 7px;
-        height: 7px;
-        border-radius: 50%;
+        width: 7px; height: 7px; border-radius: 50%;
         background: #6ba944;
         box-shadow: 0 0 0 3px rgba(107,169,68,.15);
     }
 
     /* ---------- PANEL LABELS ---------- */
     .panel-label {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
+        display: flex; align-items: center; justify-content: space-between;
         padding: 2px 4px 8px 4px;
-        font-size: 11px;
-        font-weight: 600;
+        font-size: 11px; font-weight: 600;
         color: var(--text-mute);
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
+        letter-spacing: 0.1em; text-transform: uppercase;
     }
     .panel-label-title { display: flex; align-items: center; gap: 8px; }
     .panel-label-tools { display: flex; gap: 3px; align-items: center; }
     .panel-tool {
-        width: 28px;
-        height: 28px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        width: 28px; height: 28px;
+        display: flex; align-items: center; justify-content: center;
         color: var(--text-mute) !important;
         border-radius: 6px;
         text-decoration: none !important;
         cursor: pointer;
         transition: background-color 0.15s ease, color 0.15s ease;
     }
-    .panel-tool:hover {
+    .panel-tool:hover { background: var(--panel); color: var(--accent) !important; }
+
+    .version-nav {
+        display: inline-flex; align-items: center; gap: 2px;
         background: var(--panel);
-        color: var(--accent) !important;
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius-sm);
+        padding: 2px;
+        font-size: 11.5px;
+        color: var(--text-dim);
+    }
+    .version-nav a {
+        width: 22px; height: 22px;
+        display: inline-flex; align-items: center; justify-content: center;
+        color: var(--text-dim) !important;
         text-decoration: none !important;
+        border-radius: 4px;
+        transition: background-color 0.15s ease, color 0.15s ease;
+    }
+    .version-nav a:hover { background: var(--card); color: var(--accent) !important; }
+    .version-nav span {
+        padding: 0 8px;
+        font-variant-numeric: tabular-nums;
+        font-size: 11.5px;
+        color: var(--text-dim) !important;
     }
 
-    /* ---------- DOWNLOAD BUTTON (preview header) ---------- */
-    [data-testid="stDownloadButton"] {
-        margin: 0 !important;
-        padding: 0 !important;
-    }
+    /* ---------- DOWNLOAD / ACTION BUTTONS ---------- */
+    [data-testid="stDownloadButton"] { margin: 0 !important; padding: 0 !important; }
     [data-testid="stDownloadButton"] > button {
         background: var(--card) !important;
         color: var(--text-dim) !important;
@@ -591,32 +636,24 @@ st.markdown("""
         border-radius: var(--radius-sm) !important;
         font-size: 12px !important;
         font-weight: 500 !important;
-        height: 28px !important;
-        min-height: 28px !important;
+        height: 28px !important; min-height: 28px !important;
         padding: 0 10px 0 8px !important;
         width: 100% !important;
         box-shadow: none !important;
-        transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease !important;
         display: inline-flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-        gap: 6px !important;
-        cursor: pointer !important;
+        align-items: center !important; justify-content: center !important;
+        gap: 6px !important; cursor: pointer !important;
+        transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease !important;
     }
     [data-testid="stDownloadButton"] > button:hover {
         border-color: var(--accent) !important;
         color: var(--accent) !important;
         background: rgba(201,100,66,.03) !important;
     }
-    [data-testid="stDownloadButton"] > button:focus {
-        box-shadow: none !important;
-        outline: none !important;
-    }
+    [data-testid="stDownloadButton"] > button:focus { box-shadow: none !important; outline: none !important; }
     [data-testid="stDownloadButton"] > button p {
-        color: inherit !important;
-        font-size: 12px !important;
-        margin: 0 !important;
-        white-space: nowrap !important;
+        color: inherit !important; font-size: 12px !important;
+        margin: 0 !important; white-space: nowrap !important;
     }
 
     /* ---------- CHAT ---------- */
@@ -635,16 +672,12 @@ st.markdown("""
         padding: 6px 0 !important;
         margin-bottom: 8px !important;
         box-shadow: none !important;
-        display: flex !important;
-        flex-direction: row !important;
-        align-items: flex-start !important;
-        gap: 0 !important;
+        display: flex !important; flex-direction: row !important;
+        align-items: flex-start !important; gap: 0 !important;
         animation: fadeUp 0.28s cubic-bezier(0.16, 1, 0.3, 1);
     }
     [data-testid="stChatMessage"] img {
-        display: none !important;
-        width: 0 !important;
-        height: 0 !important;
+        display: none !important; width: 0 !important; height: 0 !important;
     }
     [data-testid="stChatMessageContent"] {
         flex: 1 1 auto !important;
@@ -668,14 +701,11 @@ st.markdown("""
         flex: 0 1 auto !important;
     }
 
-    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) {
-        margin-bottom: 16px !important;
-    }
+    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) { margin-bottom: 16px !important; }
     [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stChatMessageContent"]::before {
         content: "AETHER";
         display: block;
-        font-size: 10.5px;
-        font-weight: 700;
+        font-size: 10.5px; font-weight: 700;
         color: var(--text-mute);
         letter-spacing: 0.1em;
         margin-bottom: 8px;
@@ -685,13 +715,65 @@ st.markdown("""
     [data-testid="stChatMessage"] span,
     [data-testid="stChatMessage"] li {
         color: var(--text) !important;
-        font-size: 14.5px;
-        line-height: 1.65;
+        font-size: 14.5px; line-height: 1.65;
     }
 
     @keyframes fadeUp {
         from { opacity: 0; transform: translateY(3px); }
         to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ---- Acoes de mensagem (editar / regenerar) ---- */
+    .msg-actions {
+        display: flex; gap: 12px; align-items: center;
+        margin-top: 6px; opacity: 0;
+        transition: opacity 0.15s ease;
+    }
+    [data-testid="stChatMessage"]:hover .msg-actions { opacity: 1; }
+    .msg-action {
+        font-size: 11.5px;
+        color: var(--text-mute) !important;
+        text-decoration: none !important;
+        cursor: pointer;
+        font-weight: 500;
+        display: inline-flex; align-items: center; gap: 4px;
+        transition: color 0.15s ease;
+    }
+    .msg-action:hover { color: var(--accent) !important; }
+
+    .artifact-badge {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 4px 10px;
+        margin-top: 10px;
+        background: rgba(201,100,66,.08);
+        border: 1px solid rgba(201,100,66,.22);
+        border-radius: 999px;
+        font-size: 11px; font-weight: 600;
+        color: var(--accent) !important;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
+    .artifact-badge::before {
+        content: "";
+        width: 6px; height: 6px; border-radius: 50%;
+        background: var(--accent);
+    }
+
+    /* ---- Form inline de edicao ---- */
+    [data-testid="stChatMessage"] [data-testid="stForm"] {
+        background: var(--card) !important;
+        border: 1px solid var(--accent) !important;
+        border-radius: var(--radius-md) !important;
+        padding: 8px 10px !important;
+        margin-top: 6px !important;
+    }
+    [data-testid="stChatMessage"] [data-testid="stTextArea"] textarea {
+        font-size: 14px !important;
+        line-height: 1.55 !important;
+        border: 1px solid var(--border) !important;
+        border-radius: var(--radius-sm) !important;
+        padding: 8px 10px !important;
+        background: var(--bg) !important;
     }
 
     [data-testid="stChatMessage"] [data-testid="stCode"],
@@ -705,8 +787,7 @@ st.markdown("""
         background: transparent !important;
         color: var(--text) !important;
         font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace !important;
-        font-size: 12.5px !important;
-        line-height: 1.6 !important;
+        font-size: 12.5px !important; line-height: 1.6 !important;
     }
     [data-testid="stChatMessage"] p code,
     [data-testid="stChatMessage"] li code {
@@ -719,15 +800,11 @@ st.markdown("""
     }
 
     [data-testid="stChatMessage"] [data-testid="stExpander"] {
-        border: none !important;
-        background: transparent !important;
-        margin: 0 0 8px 0 !important;
-        padding: 0 !important;
+        border: none !important; background: transparent !important;
+        margin: 0 0 8px 0 !important; padding: 0 !important;
     }
     [data-testid="stChatMessage"] [data-testid="stExpander"] details {
-        border: none !important;
-        background: transparent !important;
-        padding: 0 !important;
+        border: none !important; background: transparent !important; padding: 0 !important;
     }
     [data-testid="stChatMessage"] [data-testid="stExpander"] summary {
         padding: 2px 0 !important;
@@ -741,19 +818,14 @@ st.markdown("""
         transition: opacity 0.15s ease, color 0.15s ease;
     }
     [data-testid="stChatMessage"] [data-testid="stExpander"] summary:hover {
-        opacity: 1;
-        color: var(--accent) !important;
+        opacity: 1; color: var(--accent) !important;
     }
     [data-testid="stChatMessage"] [data-testid="stExpander"] summary p {
-        font-size: 12px !important;
-        color: inherit !important;
-        display: inline !important;
+        font-size: 12px !important; color: inherit !important; display: inline !important;
     }
     [data-testid="stChatMessage"] [data-testid="stExpander"] summary svg {
-        width: 10px !important;
-        height: 10px !important;
-        opacity: 0.6;
-        margin-right: 6px;
+        width: 10px !important; height: 10px !important;
+        opacity: 0.6; margin-right: 6px;
     }
     [data-testid="stChatMessage"] [data-testid="stExpanderDetails"] {
         border-left: 2px solid var(--border-soft) !important;
@@ -764,9 +836,7 @@ st.markdown("""
     [data-testid="stChatMessage"] [data-testid="stExpanderDetails"] p {
         font-size: 12.5px !important;
         color: var(--text-dim) !important;
-        line-height: 1.65;
-        font-style: italic;
-        opacity: 0.9;
+        line-height: 1.65; font-style: italic; opacity: 0.9;
     }
 
     /* ---------- COMPOSER ---------- */
@@ -778,17 +848,12 @@ st.markdown("""
         box-shadow: 0 2px 8px rgba(0,0,0,.04);
         margin-top: 4px;
     }
-    [data-testid="stForm"] > div > [data-testid="stVerticalBlock"] {
-        gap: 0 !important;
-    }
+    [data-testid="stForm"] > div > [data-testid="stVerticalBlock"] { gap: 0 !important; }
     [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
-        align-items: center !important;
-        gap: 6px !important;
+        align-items: center !important; gap: 6px !important;
     }
     [data-testid="stForm"] [data-testid="stTextInput"] > div {
-        border: none !important;
-        background: transparent !important;
-        box-shadow: none !important;
+        border: none !important; background: transparent !important; box-shadow: none !important;
     }
     [data-testid="stForm"] [data-testid="stTextInput"] input {
         background: transparent !important;
@@ -808,12 +873,8 @@ st.markdown("""
     }
 
     [data-testid="stForm"] [data-testid="stPopover"] > button {
-        width: 40px !important;
-        height: 40px !important;
-        min-width: 40px !important;
-        padding: 0 !important;
-        font-size: 0 !important;
-        color: transparent !important;
+        width: 40px !important; height: 40px !important; min-width: 40px !important;
+        padding: 0 !important; font-size: 0 !important; color: transparent !important;
         background-color: transparent !important;
         border: 1px solid var(--border-soft) !important;
         border-radius: var(--radius-sm) !important;
@@ -833,11 +894,8 @@ st.markdown("""
         color: #ffffff !important;
         border: none !important;
         border-radius: var(--radius-sm) !important;
-        width: 44px !important;
-        height: 44px !important;
-        min-width: 44px !important;
-        padding: 0 !important;
-        font-size: 0 !important;
+        width: 44px !important; height: 44px !important; min-width: 44px !important;
+        padding: 0 !important; font-size: 0 !important;
         box-shadow: 0 2px 6px rgba(201,100,66,.28) !important;
         transition: background-color 0.15s ease, transform 0.15s ease !important;
         background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 2L11 13M22 2l-7 20-4-9-9-4z'/%3E%3C/svg%3E") !important;
@@ -850,16 +908,13 @@ st.markdown("""
     }
 
     .composer-mic {
-        width: 40px !important;
-        height: 40px !important;
+        width: 40px !important; height: 40px !important;
         display: inline-flex !important;
-        align-items: center !important;
-        justify-content: center !important;
+        align-items: center !important; justify-content: center !important;
         color: var(--text-mute) !important;
         border: 1px solid var(--border-soft) !important;
         border-radius: var(--radius-sm) !important;
-        text-decoration: none !important;
-        background: transparent;
+        text-decoration: none !important; background: transparent;
         transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
     }
     .composer-mic:hover {
@@ -870,9 +925,7 @@ st.markdown("""
     }
 
     .attach-chip {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
+        display: inline-flex; align-items: center; gap: 8px;
         padding: 6px 12px;
         background: var(--panel);
         border: 1px solid var(--border-soft);
@@ -884,29 +937,44 @@ st.markdown("""
     .attach-chip span { color: var(--text-dim) !important; }
     .attach-chip a {
         color: var(--text-mute) !important;
-        text-decoration: none;
-        font-weight: 600;
-        margin-left: 4px;
-        transition: color 0.15s ease;
+        text-decoration: none; font-weight: 600;
+        margin-left: 4px; transition: color 0.15s ease;
     }
     .attach-chip a:hover { color: var(--accent) !important; }
 
+    /* ---------- STOP BUTTON ---------- */
+    .stop-wrap {
+        display: flex; justify-content: center;
+        margin: 4px 0 8px 0;
+    }
+    .stop-wrap a {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 6px 12px;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        font-size: 12px; font-weight: 500;
+        color: var(--text-dim) !important;
+        text-decoration: none !important;
+        transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+    }
+    .stop-wrap a:hover {
+        border-color: var(--accent) !important;
+        color: var(--accent) !important;
+        background: rgba(201,100,66,.04);
+    }
+
     /* ---------- PREVIEW ---------- */
     .preview-empty {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
         text-align: center;
         padding: 40px 24px;
         min-height: 480px;
     }
     .preview-empty-icon {
-        width: 78px;
-        height: 78px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        width: 78px; height: 78px;
+        display: flex; align-items: center; justify-content: center;
         background: var(--panel);
         border: 1px solid var(--border-soft);
         border-radius: 50%;
@@ -914,30 +982,23 @@ st.markdown("""
         margin-bottom: 22px;
     }
     .preview-empty-title {
-        font-size: 15.5px;
-        font-weight: 600;
+        font-size: 15.5px; font-weight: 600;
         color: var(--text) !important;
-        margin-bottom: 8px;
-        letter-spacing: -0.01em;
+        margin-bottom: 8px; letter-spacing: -0.01em;
     }
     .preview-empty-text {
         font-size: 13px;
         color: var(--text-mute) !important;
-        line-height: 1.6;
-        max-width: 320px;
-        margin-bottom: 20px;
+        line-height: 1.6; max-width: 320px; margin-bottom: 20px;
     }
     .preview-empty-btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
+        display: inline-flex; align-items: center; gap: 6px;
         padding: 8px 16px;
         background: var(--card);
         color: var(--text) !important;
         border: 1px solid var(--border);
         border-radius: var(--radius-sm);
-        font-size: 13px;
-        font-weight: 500;
+        font-size: 13px; font-weight: 500;
         cursor: pointer;
         text-decoration: none !important;
         transition: border-color 0.15s ease, color 0.15s ease;
@@ -956,8 +1017,7 @@ st.markdown("""
 
     .cursor {
         display: inline-block;
-        width: 2px;
-        height: 1.05em;
+        width: 2px; height: 1.05em;
         background: var(--accent);
         vertical-align: text-bottom;
         margin-left: 2px;
@@ -976,8 +1036,7 @@ st.markdown("""
         font-size: 13px !important;
         padding: 0.5rem 1rem !important;
         transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease !important;
-        box-shadow: none !important;
-        cursor: pointer !important;
+        box-shadow: none !important; cursor: pointer !important;
     }
     .stButton > button:hover {
         border-color: var(--accent) !important;
@@ -1033,17 +1092,12 @@ st.markdown("""
 
     ::-webkit-scrollbar { width: 8px; height: 8px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb {
-        background: #dedbd3;
-        border-radius: 4px;
-    }
+    ::-webkit-scrollbar-thumb { background: #dedbd3; border-radius: 4px; }
     ::-webkit-scrollbar-thumb:hover { background: #c9c6be; }
 
     /* ---------- MENU MOBILE ---------- */
-    /* Esconde o botao de menu nativo no desktop (ja temos a sidebar fixa). */
     [data-testid="stSidebarNav"] { display: none !important; }
 
-    /* Em telas pequenas: libera o toggle nativo + overlay da sidebar. */
     @media (max-width: 900px) {
         [data-testid="stSidebarCollapseButton"],
         [data-testid="stSidebarCollapseButton"] button,
@@ -1059,14 +1113,10 @@ st.markdown("""
             border-radius: var(--radius-sm) !important;
             box-shadow: var(--shadow-sm) !important;
             color: var(--accent) !important;
-            top: 12px !important;
-            left: 12px !important;
+            top: 12px !important; left: 12px !important;
         }
-
         section[data-testid="stSidebar"] {
-            width: 240px !important;
-            min-width: 240px !important;
-            max-width: 240px !important;
+            width: 240px !important; min-width: 240px !important; max-width: 240px !important;
             box-shadow: 2px 0 18px rgba(0,0,0,.08);
         }
         section[data-testid="stSidebar"][aria-expanded="false"] {
@@ -1076,7 +1126,6 @@ st.markdown("""
         section[data-testid="stSidebar"][aria-expanded="true"] {
             transition: margin-left 0.2s ease;
         }
-
         .app-header {
             padding: 10px 14px 10px 56px !important;
             margin-bottom: 8px;
@@ -1088,17 +1137,12 @@ st.markdown("""
             max-height: var(--panel-h) !important;
             min-height: var(--panel-h) !important;
         }
-
         .preview-empty { min-height: 420px; padding: 30px 20px; }
     }
 
     @media (max-width: 640px) {
-        .block-container {
-            padding: 0.4rem 0.75rem 0.4rem 0.75rem !important;
-        }
-        .app-header {
-            padding: 8px 12px 8px 52px !important;
-        }
+        .block-container { padding: 0.4rem 0.75rem 0.4rem 0.75rem !important; }
+        .app-header { padding: 8px 12px 8px 52px !important; }
         .app-brand-name { font-size: 14px; }
         .app-status { padding: 5px 10px; font-size: 11px; }
         .preview-empty { min-height: 340px; padding: 24px 16px; }
@@ -1106,6 +1150,32 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
+
+# ============================================================
+# ATALHO: ESC cancela edicao
+# ============================================================
+components.html(
+    """
+    <script>
+    (function () {
+        const doc = window.parent.document;
+        if (doc.__aetherEscBound) return;
+        doc.__aetherEscBound = true;
+        doc.addEventListener('keydown', function (e) {
+            if (e.key !== 'Escape') return;
+            const url = new URL(window.parent.location.href);
+            if (url.searchParams.get('a') === 'edit') {
+                url.searchParams.set('a', 'cancel_edit');
+                url.searchParams.delete('i');
+                window.parent.location.href = url.toString();
+            }
+        });
+    })();
+    </script>
+    """,
+    height=0,
+)
 
 
 # ============================================================
@@ -1141,6 +1211,15 @@ with st.sidebar:
         {ICON_TRASH}<span>Limpar conversa</span>
     </a>
     """, unsafe_allow_html=True)
+
+    st.markdown('<div class="sb-section">Busca</div>', unsafe_allow_html=True)
+    st.session_state.search_query = st.text_input(
+        "Buscar na conversa",
+        value=st.session_state.search_query,
+        placeholder="Filtrar mensagens...",
+        label_visibility="collapsed",
+        key="sidebar_search",
+    )
 
 
 # ============================================================
@@ -1193,6 +1272,8 @@ with col_chat:
             )
         st.session_state.messages.append({"role": "user", "content": _prompt})
 
+    _query = (st.session_state.search_query or "").strip().lower()
+
     chat_box = st.container(height=PANEL_HEIGHT)
 
     with chat_box:
@@ -1205,10 +1286,58 @@ with col_chat:
                 unsafe_allow_html=True,
             )
 
-        for msg in st.session_state.messages:
+        for i, msg in enumerate(st.session_state.messages):
+            # filtro de busca
+            if _query and _query not in (msg.get("content") or "").lower():
+                continue
+
             if msg["role"] == "user":
                 with st.chat_message("user", avatar=_AVATAR_USER):
-                    st.markdown(msg["content"])
+                    if st.session_state.editing_idx == i:
+                        with st.form(f"edit_form_{i}", clear_on_submit=False):
+                            st.markdown(
+                                '<div style="font-size:11px;font-weight:600;'
+                                'color:#c96442;letter-spacing:.08em;'
+                                'text-transform:uppercase;margin-bottom:6px;">'
+                                'Editando mensagem'
+                                '</div>',
+                                unsafe_allow_html=True,
+                            )
+                            new_text = st.text_area(
+                                "Editar",
+                                value=msg["content"],
+                                key=f"edit_area_{i}",
+                                label_visibility="collapsed",
+                                height=130,
+                            )
+                            cc1, cc2 = st.columns([1.4, 1])
+                            with cc1:
+                                save = st.form_submit_button(
+                                    "Salvar e reenviar",
+                                    use_container_width=True,
+                                )
+                            with cc2:
+                                cancel = st.form_submit_button(
+                                    "Cancelar",
+                                    use_container_width=True,
+                                )
+                            if save and new_text.strip():
+                                st.session_state.messages = st.session_state.messages[:i]
+                                st.session_state.pending_prompt = new_text.strip()
+                                st.session_state.editing_idx = None
+                                st.rerun()
+                            if cancel:
+                                st.session_state.editing_idx = None
+                                st.rerun()
+                    else:
+                        st.markdown(msg["content"])
+                        st.markdown(
+                            f'<div class="msg-actions">'
+                            f'<a class="msg-action" href="?a=edit&i={i}" target="_self">'
+                            f'{ICON_EDIT}<span>editar</span></a>'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
             else:
                 with st.chat_message("assistant", avatar=_AVATAR_AI):
                     if msg.get("thinking"):
@@ -1216,9 +1345,35 @@ with col_chat:
                             st.markdown(msg["thinking"])
                     if msg.get("content"):
                         st.markdown(msg["content"])
+                    if msg.get("has_artifact"):
+                        st.markdown(
+                            '<span class="artifact-badge">Artifact '
+                            f'{(msg.get("artifact_lang") or "html").upper()}</span>',
+                            unsafe_allow_html=True,
+                        )
+                    is_last = (i == len(st.session_state.messages) - 1)
+                    if is_last:
+                        st.markdown(
+                            f'<div class="msg-actions">'
+                            f'<a class="msg-action" href="?a=regen" target="_self">'
+                            f'{ICON_REFRESH}<span>regenerar</span></a>'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
 
         if _prompt:
             with st.chat_message("assistant", avatar=_AVATAR_AI):
+
+                # botao de parar (best-effort)
+                stop_holder = st.empty()
+                with stop_holder:
+                    st.markdown(
+                        f'<div class="stop-wrap">'
+                        f'<a href="?a=stop_generation" target="_self">'
+                        f'{ICON_STOP}<span>Parar geracao</span></a>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
 
                 thinking_slot = st.expander("Processando raciocinio", expanded=False)
                 with thinking_slot:
@@ -1246,6 +1401,8 @@ with col_chat:
                     )
 
                     for chunk in completion:
+                        if st.session_state.get("stop_requested"):
+                            break
                         if not chunk.choices:
                             continue
                         delta = chunk.choices[0].delta
@@ -1280,6 +1437,8 @@ with col_chat:
                                     unsafe_allow_html=True,
                                 )
 
+                    stop_holder.empty()
+
                     parsed = parse_response(raw_buffer)
                     final_thinking = "\n\n".join(
                         filter(None, [reasoning_accum, parsed["thinking"]])
@@ -1292,14 +1451,35 @@ with col_chat:
 
                     text_body.markdown(parsed["text"] or "_Sem resposta._")
 
-                    if parsed["artifact"]:
+                    has_artifact = bool(parsed["artifact"])
+                    art_lang = parsed["lang"]
+
+                    if has_artifact:
+                        # registra nova versao
+                        st.session_state.artifact_versions.append({
+                            "code": parsed["artifact"],
+                            "lang": parsed["lang"],
+                            "ts":   datetime.now().strftime("%H:%M:%S"),
+                            "prompt": (st.session_state.messages[-1]["content"] or "")[:60],
+                        })
+                        st.session_state.artifact_version_idx = (
+                            len(st.session_state.artifact_versions) - 1
+                        )
                         st.session_state.current_artifact = parsed["artifact"]
                         st.session_state.artifact_lang = parsed["lang"]
 
+                        st.markdown(
+                            '<span class="artifact-badge">Artifact '
+                            f'{(art_lang or "html").upper()}</span>',
+                            unsafe_allow_html=True,
+                        )
+
                     st.session_state.messages.append({
-                        "role":     "assistant",
-                        "content":  parsed["text"],
-                        "thinking": final_thinking,
+                        "role":            "assistant",
+                        "content":         parsed["text"],
+                        "thinking":        final_thinking,
+                        "has_artifact":    has_artifact,
+                        "artifact_lang":   art_lang if has_artifact else None,
                     })
 
                 except Exception as e:
@@ -1310,6 +1490,7 @@ with col_chat:
                         "thinking": "",
                     })
 
+            st.session_state.stop_requested = False
             st.session_state.attached_name = None
             st.session_state.attached_text = None
             _do_rerun = True
@@ -1371,9 +1552,13 @@ with col_chat:
 # ------------------------------------------------------------
 with col_preview:
 
-    # Header do preview: titulo | refresh | download
-    hdr_l, hdr_m, hdr_r = st.columns(
-        [4.5, 0.55, 1.6],
+    has_art = bool(st.session_state.current_artifact)
+    total_v = len(st.session_state.artifact_versions)
+    cur_v   = st.session_state.artifact_version_idx + 1 if total_v else 0
+
+    # Header do preview: titulo | versao | refresh | editar | download
+    hdr_l, hdr_v, hdr_t, hdr_e, hdr_r = st.columns(
+        [2.8, 1.35, 0.55, 0.55, 1.6],
         gap="small",
         vertical_alignment="center",
     )
@@ -1385,15 +1570,44 @@ with col_preview:
             unsafe_allow_html=True,
         )
 
-    with hdr_m:
+    with hdr_v:
+        if has_art and total_v > 0:
+            st.markdown(
+                f'<div class="version-nav">'
+                f'<a href="?a=artifact_prev" target="_self" title="Versao anterior">{ICON_BACK}</a>'
+                f'<span>{cur_v}/{total_v}</span>'
+                f'<a href="?a=artifact_next" target="_self" title="Proxima versao">{ICON_NEXT}</a>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+    with hdr_t:
         st.markdown(
             f'<a class="panel-tool" href="?a=refresh" target="_self" '
             f'title="Atualizar">{ICON_REFRESH}</a>',
             unsafe_allow_html=True,
         )
 
+    with hdr_e:
+        if has_art:
+            tool_href = (
+                "?a=cancel_artifact_edit"
+                if st.session_state.artifact_edit_mode
+                else "?a=toggle_artifact_edit"
+            )
+            tool_title = (
+                "Fechar edicao"
+                if st.session_state.artifact_edit_mode
+                else "Editar codigo"
+            )
+            st.markdown(
+                f'<a class="panel-tool" href="{tool_href}" target="_self" '
+                f'title="{tool_title}">{ICON_EDIT}</a>',
+                unsafe_allow_html=True,
+            )
+
     with hdr_r:
-        if st.session_state.current_artifact:
+        if has_art:
             st.download_button(
                 label="Baixar HTML",
                 data=st.session_state.current_artifact,
@@ -1406,13 +1620,7 @@ with col_preview:
     preview_box = st.container(height=PANEL_HEIGHT)
 
     with preview_box:
-        if st.session_state.current_artifact:
-            components.html(
-                st.session_state.current_artifact,
-                height=IFRAME_HEIGHT,
-                scrolling=True,
-            )
-        else:
+        if not has_art:
             st.markdown(f"""
             <div class="preview-empty">
                 <div class="preview-empty-icon">{ICON_IMAGE}</div>
@@ -1425,6 +1633,56 @@ with col_preview:
                 </a>
             </div>
             """, unsafe_allow_html=True)
+
+        elif st.session_state.artifact_edit_mode:
+            # Modo edicao: substitui o iframe por um textarea
+            with st.form("artifact_edit_form", clear_on_submit=False):
+                st.markdown(
+                    '<div style="font-size:11px;font-weight:600;'
+                    'color:#c96442;letter-spacing:.08em;'
+                    'text-transform:uppercase;margin-bottom:6px;">'
+                    'Editando artifact'
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
+                edited = st.text_area(
+                    "Codigo",
+                    value=st.session_state.current_artifact,
+                    height=IFRAME_HEIGHT - 110,
+                    label_visibility="collapsed",
+                    key="artifact_edit_area",
+                )
+                ec1, ec2 = st.columns([1.4, 1])
+                with ec1:
+                    apply_edit = st.form_submit_button(
+                        "Aplicar", use_container_width=True
+                    )
+                with ec2:
+                    cancel_edit = st.form_submit_button(
+                        "Cancelar", use_container_width=True
+                    )
+                if apply_edit:
+                    st.session_state.current_artifact = edited
+                    if (
+                        st.session_state.artifact_versions
+                        and 0 <= st.session_state.artifact_version_idx
+                        < len(st.session_state.artifact_versions)
+                    ):
+                        st.session_state.artifact_versions[
+                            st.session_state.artifact_version_idx
+                        ]["code"] = edited
+                    st.session_state.artifact_edit_mode = False
+                    st.rerun()
+                if cancel_edit:
+                    st.session_state.artifact_edit_mode = False
+                    st.rerun()
+
+        else:
+            components.html(
+                st.session_state.current_artifact,
+                height=IFRAME_HEIGHT,
+                scrolling=True,
+            )
 
 
 # ============================================================
