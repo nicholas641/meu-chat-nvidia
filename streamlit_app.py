@@ -1,13 +1,14 @@
 """
-Aether Engine — AI workspace
------------------------------
-Layout Claude-like: sidebar + chat centralizado + preview de artifact.
+Aether Engine — Chat IA
+-----------------------
+Layout Claude-like: sidebar + chat centralizado + raciocinio visivel.
+Sem preview de artifact — apenas conversa.
 """
 
 import os
+import pickle
 import re
 import urllib.parse
-import pickle
 from datetime import datetime
 import uuid
 
@@ -17,7 +18,7 @@ from openai import OpenAI
 
 
 # ============================================================
-# PERSISTENCIA SIMPLES (best-effort, tolera FS read-only)
+# PERSISTENCIA
 # ============================================================
 def salvar_historico_no_disco():
     try:
@@ -94,18 +95,14 @@ ICON_FOLDER  = _svg('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0
 ICON_HISTORY = _svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>', 16)
 ICON_GEAR    = _svg('<circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>', 16)
 ICON_REFRESH = _svg('<path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/>', 15)
-ICON_IMAGE   = _svg('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/>', 44)
 ICON_MIC     = _svg('<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3"/>', 18)
 ICON_TRASH   = _svg('<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>', 16)
-ICON_DOWNLOAD= _svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>', 14)
 ICON_EDIT    = _svg('<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4z"/>', 15)
 ICON_STOP    = _svg('<rect x="6" y="6" width="12" height="12" rx="2"/>', 14)
-ICON_BACK    = _svg('<path d="M15 18l-6-6 6-6"/>', 14)
-ICON_NEXT    = _svg('<path d="M9 18l6-6-6-6"/>', 14)
-ICON_EYE     = _svg('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>', 15)
-ICON_CODE    = _svg('<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>', 15)
 ICON_STAR    = _svg('<polygon points="12 2 15 9 22 9.3 16.5 14 18.5 21 12 17 5.5 21 7.5 14 2 9.3 9 9"/>', 14)
 ICON_ARROWL  = _svg('<path d="M19 12H5M12 19l-7-7 7-7"/>', 15)
+ICON_BRAIN   = _svg('<path d="M9.5 2a3.5 3.5 0 0 0-3.5 3.5v.5A3 3 0 0 0 4 9v1a3 3 0 0 0 1 2.2V15a4 4 0 0 0 4 4h.5V2H9.5z"/><path d="M14.5 2a3.5 3.5 0 0 1 3.5 3.5v.5A3 3 0 0 1 20 9v1a3 3 0 0 1-1 2.2V15a4 4 0 0 1-4 4h-.5V2h.5z"/>', 15)
+ICON_COPY    = _svg('<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>', 14)
 
 
 # ============================================================
@@ -113,21 +110,13 @@ ICON_ARROWL  = _svg('<path d="M19 12H5M12 19l-7-7 7-7"/>', 15)
 # ============================================================
 BASE_SYSTEM_PROMPT = """You are Aether Engine, a professional technical assistant.
 
-Strict rules:
-1. Be concise and direct.
-2. Respond in the same language the user writes in.
-3. When the user requests a UI component, visual, animation, or HTML/CSS/JS
-   output, wrap the complete code inside <artifact>...</artifact> tags.
-4. Inside <artifact>, either:
-   a) write one full standalone HTML document (with <!DOCTYPE html>), or
-   b) split it into multiple files using this format:
-      <file name="index.html">...</file>
-      <file name="style.css">...</file>
-      <file name="script.js">...</file>
-      One of the files must be named index.html.
-5. Before producing the artifact, briefly narrate what you are doing.
-6. Do not add commentary about the artifact outside the tags beyond a
-   short summary.
+Behavior:
+- Be concise and direct.
+- Respond in the same language the user writes in.
+- When the user requests code, always include the full code in a fenced
+  markdown block (```lang ... ```), well-formatted and complete.
+- Prefer to explain your reasoning step by step before delivering the final
+  answer, especially for technical or code tasks.
 """
 
 
@@ -165,31 +154,21 @@ st.set_page_config(
 # SESSION STATE
 # ============================================================
 _DEFAULTS = {
-    "messages":             carregar_historico_do_disco(),
-    "current_artifact":     None,
-    "artifact_lang":        None,
-    "artifact_versions":    [],
-    "artifact_version_idx": -1,
-    "artifact_edit_mode":   False,
-    "current_files":        {},
-    "current_thinking":     "",
-    "preview_view":         "preview",
-    "selected_file":        None,
-    "pending_prompt":       None,
-    "temperature":          1.0,
-    "top_p":                0.95,
-    "max_tokens":           8192,
-    "attached_name":        None,
-    "attached_text":        None,
-    "editing_idx":          None,
-    "stop_requested":       False,
-    "search_query":         "",
-    "refresh_counter":      0,
-    "custom_instructions":  "",
-    "conversations":        [],
-    "show_history":         False,
-    "show_projects":        False,
-    "show_settings":        False,
+    "messages":            carregar_historico_do_disco(),
+    "pending_prompt":      None,
+    "temperature":         1.0,
+    "top_p":               0.95,
+    "max_tokens":          8192,
+    "attached_name":       None,
+    "attached_text":       None,
+    "editing_idx":         None,
+    "stop_requested":      False,
+    "search_query":        "",
+    "custom_instructions": "",
+    "conversations":       [],
+    "show_history":        False,
+    "show_projects":       False,
+    "show_settings":       False,
 }
 for k, v in _DEFAULTS.items():
     if k not in st.session_state:
@@ -201,15 +180,6 @@ for k, v in _DEFAULTS.items():
 # ============================================================
 def _reset_conversation():
     st.session_state.messages = []
-    st.session_state.current_artifact = None
-    st.session_state.current_files = {}
-    st.session_state.current_thinking = ""
-    st.session_state.artifact_lang = None
-    st.session_state.artifact_versions = []
-    st.session_state.artifact_version_idx = -1
-    st.session_state.artifact_edit_mode = False
-    st.session_state.preview_view = "preview"
-    st.session_state.selected_file = None
     st.session_state.editing_idx = None
 
 
@@ -229,33 +199,19 @@ def _snapshot_conversation(pinned: bool = False, title: str = None):
         )
         title = (first_user or "Conversa").strip().splitlines()[0][:42]
     st.session_state.conversations.insert(0, {
-        "id":                   str(uuid.uuid4())[:8],
-        "title":                title or "Conversa sem titulo",
-        "ts":                   datetime.now().strftime("%d/%m %H:%M"),
-        "messages":             st.session_state.messages,
-        "artifact_versions":    st.session_state.get("artifact_versions", []),
-        "artifact_version_idx": st.session_state.get("artifact_version_idx", -1),
-        "current_artifact":     st.session_state.get("current_artifact", None),
-        "current_files":        st.session_state.get("current_files", {}),
-        "current_thinking":     st.session_state.get("current_thinking", ""),
-        "artifact_lang":        st.session_state.get("artifact_lang", None),
-        "pinned":               pinned,
+        "id":       str(uuid.uuid4())[:8],
+        "title":    title or "Conversa sem titulo",
+        "ts":       datetime.now().strftime("%d/%m %H:%M"),
+        "messages": st.session_state.messages,
+        "pinned":   pinned,
     })
 
 
 def _load_conversation(conv_id: str) -> bool:
     for c in st.session_state.conversations:
         if c["id"] == conv_id:
-            st.session_state.messages            = c.get("messages", [])
-            st.session_state.artifact_versions    = c.get("artifact_versions", [])
-            st.session_state.artifact_version_idx = c.get("artifact_version_idx", -1)
-            st.session_state.current_artifact     = c.get("current_artifact", None)
-            st.session_state.current_files        = c.get("current_files", {})
-            st.session_state.current_thinking     = c.get("current_thinking", "")
-            st.session_state.artifact_lang        = c.get("artifact_lang", None)
-            st.session_state.artifact_edit_mode   = False
-            st.session_state.preview_view         = "preview"
-            st.session_state.editing_idx          = None
+            st.session_state.messages = c.get("messages", [])
+            st.session_state.editing_idx = None
             return True
     return False
 
@@ -273,18 +229,6 @@ if _action:
         _reset_conversation()
         _close_panels()
         st.toast("Nova conversa iniciada", icon=":material/check_circle:")
-
-    elif _action == "refresh":
-        st.session_state.refresh_counter += 1
-        st.toast("Preview atualizado", icon=":material/refresh:")
-
-    elif _action == "example":
-        st.session_state.pending_prompt = (
-            "Crie uma landing page moderna para um produto SaaS de "
-            "monitoramento de servidores. Use HTML, CSS e JavaScript "
-            "em um unico arquivo. Paleta escura, tipografia sans-serif, "
-            "secoes hero, features e footer."
-        )
 
     elif _action == "mic":
         st.toast(
@@ -334,7 +278,6 @@ if _action:
 
     elif _action == "clear_chat":
         st.session_state.messages = []
-        st.session_state.current_artifact = None
         if os.path.exists("backup_chat.pkl"):
             try:
                 os.remove("backup_chat.pkl")
@@ -363,46 +306,6 @@ if _action:
             st.session_state.pending_prompt = last_user["content"]
         st.rerun()
 
-    elif _action == "artifact_prev":
-        if st.session_state.artifact_versions:
-            i = st.session_state.artifact_version_idx - 1
-            if i < 0:
-                i = len(st.session_state.artifact_versions) - 1
-            v = st.session_state.artifact_versions[i]
-            st.session_state.artifact_version_idx = i
-            st.session_state.current_artifact = v["code"]
-            st.session_state.current_files = v.get("files", {"index.html": v["code"]})
-            st.session_state.current_thinking = v.get("thinking", "")
-            st.session_state.artifact_lang = v["lang"]
-            st.session_state.artifact_edit_mode = False
-            st.session_state.selected_file = None
-
-    elif _action == "artifact_next":
-        if st.session_state.artifact_versions:
-            i = (st.session_state.artifact_version_idx + 1) % len(
-                st.session_state.artifact_versions
-            )
-            v = st.session_state.artifact_versions[i]
-            st.session_state.artifact_version_idx = i
-            st.session_state.current_artifact = v["code"]
-            st.session_state.current_files = v.get("files", {"index.html": v["code"]})
-            st.session_state.current_thinking = v.get("thinking", "")
-            st.session_state.artifact_lang = v["lang"]
-            st.session_state.artifact_edit_mode = False
-            st.session_state.selected_file = None
-
-    elif _action == "toggle_artifact_edit":
-        st.session_state.artifact_edit_mode = not st.session_state.artifact_edit_mode
-
-    elif _action == "cancel_artifact_edit":
-        st.session_state.artifact_edit_mode = False
-
-    elif _action == "view_preview":
-        st.session_state.preview_view = "preview"
-
-    elif _action == "view_code":
-        st.session_state.preview_view = "code"
-
 
 # ============================================================
 # HELPERS DE TEXTO / PARSING
@@ -410,7 +313,6 @@ if _action:
 _THINK_RE    = re.compile(r"<thinking>(.*?)</thinking>", re.DOTALL | re.IGNORECASE)
 _ARTIFACT_RE = re.compile(r"<artifact[^>]*>(.*?)</artifact>", re.DOTALL | re.IGNORECASE)
 _HTML_BLOCK  = re.compile(r"```html\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
-_SVG_BLOCK   = re.compile(r"```svg\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
 _FILE_RE     = re.compile(r'<file\s+(?:name|path)=["\']([^"\']+)["\']\s*>(.*?)</file>', re.DOTALL | re.IGNORECASE)
 _DANGLING_RE = re.compile(r"<(thinking|artifact)\b[^>]*>(?![^<]*</\1>)", re.IGNORECASE)
 
@@ -425,134 +327,26 @@ def extract_thinking(text: str):
     return _THINK_RE.sub("", text).strip(), thinking.strip()
 
 
-def _detect_lang(code: str) -> str:
-    if not code:
-        return "html"
-    lowered = code.lower()
-    has_svg = "<svg" in lowered
-    has_html = "<html" in lowered or "<!doctype" in lowered
-    return "svg" if (has_svg and not has_html) else "html"
-
-
-def extract_artifact(text: str):
-    m = _ARTIFACT_RE.search(text)
-    if m:
-        code = m.group(1).strip()
-        return _ARTIFACT_RE.sub("", text).strip(), code, _detect_lang(code)
-
-    m = _HTML_BLOCK.search(text)
-    if m:
-        code = m.group(1).strip()
-        return _HTML_BLOCK.sub("", text).strip(), code, "html"
-
-    m = _SVG_BLOCK.search(text)
-    if m:
-        svg = m.group(1).strip()
-        wrapped = (
-            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-            "<style>html,body{margin:0;padding:0;background:#fbfaf7;}"
-            "body{display:flex;align-items:center;justify-content:center;"
-            "min-height:100vh;}</style></head><body>"
-            f"{svg}</body></html>"
-        )
-        return _SVG_BLOCK.sub("", text).strip(), wrapped, "svg"
-
-    return text.strip(), None, None
-
-
-def _parse_files(artifact_raw: str) -> dict:
-    files = {}
-    for m in _FILE_RE.finditer(artifact_raw or ""):
-        fname = m.group(1).strip()
-        fcontent = m.group(2).strip()
-        if fname:
-            files[fname] = fcontent
-    if not files:
-        files["index.html"] = artifact_raw or ""
-    return files
-
-
-def _build_preview_html(files: dict) -> str:
-    html = files.get("index.html") or next(iter(files.values()), "")
-
-    css_parts = [
-        c for n, c in files.items()
-        if n != "index.html" and n.lower().endswith(".css")
-    ]
-    js_parts = [
-        c for n, c in files.items()
-        if n != "index.html" and n.lower().endswith((".js", ".jsx"))
-    ]
-
-    if css_parts:
-        style_tag = "<style>\n" + "\n".join(css_parts) + "\n</style>"
-        html = (
-            html.replace("</head>", style_tag + "\n</head>", 1)
-            if "</head>" in html else style_tag + html
-        )
-
-    if js_parts:
-        script_tag = "<script>\n" + "\n".join(js_parts) + "\n</script>"
-        html = (
-            html.replace("</body>", script_tag + "\n</body>", 1)
-            if "</body>" in html else html + script_tag
-        )
-
-    return html
-
-
-def _maybe_strip_emojis(text: str) -> str:
-    if (st.session_state.get("custom_instructions") or "").strip():
-        return text or ""
-    if not text:
-        return text
-    cleaned = re.sub(
-        "["
-        "\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF"
-        "\U0001F1E0-\U0001F1FF\U00002700-\U000027BF\U0001F900-\U0001F9FF"
-        "\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF\U00002600-\U000026FF"
-        "\U0001F700-\U0001F77F\U0000FE00-\U0000FE0F\U00002B00-\U00002BFF"
-        "\U00002190-\U000021FF"
-        "]+",
-        "",
-        text,
-        flags=re.UNICODE,
-    )
-    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
-    cleaned = re.sub(r" +\n", "\n", cleaned)
-    return cleaned
+def strip_artifacts(text: str) -> str:
+    """Remove blocos <artifact> e <file> do texto visivel."""
+    text = _ARTIFACT_RE.sub("", text)
+    text = _FILE_RE.sub("", text)
+    return text.strip()
 
 
 def parse_response(raw: str) -> dict:
-    no_artifact, artifact_raw, lang = extract_artifact(raw)
-    visible, thinking = extract_thinking(no_artifact)
-    return {
-        "text":         _maybe_strip_emojis(visible),
-        "thinking":     thinking,
-        "artifact_raw": artifact_raw,
-        "lang":         lang,
-    }
-
-
-def _download_filename() -> str:
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return f"aether-artifact-{stamp}.html"
+    visible, thinking = extract_thinking(raw)
+    visible = strip_artifacts(visible)
+    return {"text": visible, "thinking": thinking}
 
 
 # ============================================================
-# CONSTANTES DE LAYOUT
-# ============================================================
-PANEL_HEIGHT  = 640
-IFRAME_HEIGHT = 580
-
-
-# ============================================================
-# CSS — Claude-like UI + fix do input escuro
+# CSS — Claude-like UI, foco em chat + raciocinio
 # ============================================================
 st.markdown("""
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lora:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
 """, unsafe_allow_html=True)
 
 st.markdown("""
@@ -571,6 +365,7 @@ st.markdown("""
         --panel:        #f1efe8;
         --bg-user:      #edeae0;
         --bg-code:      #f5f4ee;
+        --bg-think:     #fbf8f3;
         --border:       #e6e3d8;
         --border-soft:  #efecdf;
         --text:         #1f1e1c;
@@ -583,7 +378,6 @@ st.markdown("""
         --radius-sm:    8px;
         --radius-md:    12px;
         --radius-lg:    18px;
-        --panel-h:      640px;
     }
 
     #MainMenu { visibility: hidden; }
@@ -623,12 +417,12 @@ st.markdown("""
     }
 
     .block-container {
-        padding: 0.6rem 1.4rem 0.6rem 1.4rem !important;
+        padding: 0.6rem 1.4rem 1rem 1.4rem !important;
         max-width: 100% !important;
     }
 
     /* ============================================================
-       FIX DO INPUT ESCURO — ataca input, wrapper e container
+       FIX DO INPUT ESCURO
        ============================================================ */
     input,
     textarea,
@@ -648,15 +442,12 @@ st.markdown("""
     [data-baseweb="textarea"] textarea,
     .stTextInput input,
     .stTextArea textarea,
-    .stNumberInput input,
     section[data-testid="stSidebar"] input {
         background-color: #ffffff !important;
         color: #1f1e1c !important;
         -webkit-text-fill-color: #1f1e1c !important;
         caret-color: #c96442 !important;
     }
-
-    /* Composer: deixa transparente (pill proprio) */
     [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stTextInput"],
     [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stTextInput"] > div,
     [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stTextInput"] > div > div,
@@ -665,7 +456,6 @@ st.markdown("""
     [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stTextInput"] input {
         background-color: transparent !important;
     }
-
     input::placeholder,
     textarea::placeholder,
     [data-baseweb="input"] input::placeholder,
@@ -674,18 +464,11 @@ st.markdown("""
         -webkit-text-fill-color: #9a978e !important;
         opacity: 1 !important;
     }
-
-    /* Forca card branco nos wrappers que o dark theme pinta */
     [data-testid="stForm"],
-    [data-testid="stVerticalBlockBorderWrapper"] > div,
     [data-testid="stSidebarContent"] {
         background-color: #ffffff !important;
     }
-    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) {
-        background-color: #ffffff !important;
-    }
 
-    /* markdown geral */
     .stMarkdown, .stMarkdown p, .stMarkdown li, .stMarkdown span,
     .stMarkdown div, .stMarkdown strong, .stMarkdown em, .stMarkdown a,
     .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown h4,
@@ -696,25 +479,6 @@ st.markdown("""
     .stMarkdown code, [data-testid="stMarkdownContainer"] code {
         color: var(--text) !important;
         background: var(--bg-code) !important;
-    }
-
-    /* ============================================================
-       ALTURA FIXA DOS PAINEIS
-       ============================================================ */
-    [data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="stVerticalBlock"]),
-    [data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stVerticalBlock"]) {
-        height: var(--panel-h) !important;
-        max-height: var(--panel-h) !important;
-        min-height: var(--panel-h) !important;
-        overflow: hidden !important;
-        background: var(--card) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: var(--radius-lg) !important;
-        box-shadow: var(--shadow-sm);
-    }
-    [data-testid="stVerticalBlockBorderWrapper"] > div {
-        height: 100% !important;
-        overflow-y: auto !important;
     }
 
     /* ============================================================
@@ -794,13 +558,13 @@ st.markdown("""
     .sb-btn-primary svg { opacity: 1; }
 
     /* ============================================================
-       HEADER discreto
+       HEADER
        ============================================================ */
     .app-header {
         display: flex; align-items: center; justify-content: space-between;
         padding: 4px 6px 12px 6px;
-        background: transparent;
-        border: none; margin-bottom: 6px;
+        background: transparent; border: none; margin-bottom: 6px;
+        max-width: 800px; margin-left: auto; margin-right: auto;
     }
     .app-header-left { display: flex; align-items: center; gap: 10px; }
     .app-brand-info { line-height: 1.15; }
@@ -826,89 +590,18 @@ st.markdown("""
     }
 
     /* ============================================================
-       PANEL LABELS / TOOLS
-       ============================================================ */
-    .panel-label {
-        display: flex; align-items: center; justify-content: space-between;
-        padding: 2px 2px 8px 2px;
-        font-size: 11px; font-weight: 600;
-        color: var(--text-mute); letter-spacing: 0.1em;
-        text-transform: uppercase;
-    }
-    .panel-label-title { display: flex; align-items: center; gap: 8px; }
-    .panel-tool {
-        width: 30px; height: 30px;
-        display: flex; align-items: center; justify-content: center;
-        color: var(--text-mute) !important;
-        border-radius: 8px;
-        text-decoration: none !important;
-        cursor: pointer;
-        transition: background-color 0.15s ease, color 0.15s ease;
-    }
-    .panel-tool:hover { background: rgba(0,0,0,.05); color: var(--accent) !important; }
-    .panel-tool.active { background: rgba(201,100,66,.1); color: var(--accent) !important; }
-
-    .version-nav {
-        display: inline-flex; align-items: center; gap: 2px;
-        background: var(--panel);
-        border: 1px solid var(--border-soft);
-        border-radius: var(--radius-sm);
-        padding: 2px;
-        font-size: 11.5px; color: var(--text-dim);
-    }
-    .version-nav a {
-        width: 22px; height: 22px;
-        display: inline-flex; align-items: center; justify-content: center;
-        color: var(--text-dim) !important;
-        text-decoration: none !important; border-radius: 4px;
-        transition: background-color 0.15s ease, color 0.15s ease;
-    }
-    .version-nav a:hover { background: var(--card); color: var(--accent) !important; }
-    .version-nav span {
-        padding: 0 8px; font-variant-numeric: tabular-nums;
-        font-size: 11.5px; color: var(--text-dim) !important;
-    }
-
-    /* ============================================================
-       DOWNLOAD
-       ============================================================ */
-    [data-testid="stDownloadButton"] { margin: 0 !important; padding: 0 !important; }
-    [data-testid="stDownloadButton"] > button {
-        background: var(--card) !important;
-        color: var(--text-dim) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: var(--radius-sm) !important;
-        font-size: 12px !important; font-weight: 500 !important;
-        height: 30px !important; min-height: 30px !important;
-        padding: 0 10px 0 8px !important;
-        width: 100% !important; box-shadow: none !important;
-        display: inline-flex !important;
-        align-items: center !important; justify-content: center !important;
-        gap: 6px !important; cursor: pointer !important;
-        transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease !important;
-    }
-    [data-testid="stDownloadButton"] > button:hover {
-        border-color: var(--accent) !important;
-        color: var(--accent) !important;
-        background: rgba(201,100,66,.03) !important;
-    }
-    [data-testid="stDownloadButton"] > button:focus { box-shadow: none !important; outline: none !important; }
-    [data-testid="stDownloadButton"] > button p {
-        color: inherit !important; font-size: 12px !important;
-        margin: 0 !important; white-space: nowrap !important;
-    }
-
-    /* ============================================================
-       CHAT
+       CHAT — centralizado, max-width 800px
        ============================================================ */
     [data-testid="stChatMessage"] {
         background: transparent !important;
         border: none !important; border-radius: 0 !important;
-        padding: 4px 0 !important; margin-bottom: 18px !important;
+        padding: 4px 0 !important; margin-bottom: 22px !important;
         box-shadow: none !important;
         display: flex !important; flex-direction: row !important;
         align-items: flex-start !important; gap: 0 !important;
         animation: fadeUp 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+        max-width: 800px !important;
+        margin-left: auto !important; margin-right: auto !important;
     }
     [data-testid="stChatMessage"] img {
         display: none !important; width: 0 !important; height: 0 !important;
@@ -923,7 +616,7 @@ st.markdown("""
 
     [data-testid="stChatMessage"]:has(img[src*="useravatar"]) {
         flex-direction: row-reverse !important;
-        margin: 4px 0 24px 0 !important;
+        margin: 4px auto 26px auto !important;
     }
     [data-testid="stChatMessage"]:has(img[src*="useravatar"]) [data-testid="stChatMessageContent"] {
         background: var(--bg-user) !important;
@@ -934,25 +627,115 @@ st.markdown("""
     }
 
     [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) {
-        margin-bottom: 22px !important;
+        margin-bottom: 26px !important;
     }
 
     [data-testid="stChatMessage"] p,
     [data-testid="stChatMessage"] span,
     [data-testid="stChatMessage"] li {
         color: var(--text) !important;
-        font-size: 15px; line-height: 1.7;
+        font-size: 15px; line-height: 1.75;
     }
-    [data-testid="stChatMessage"] p { margin-bottom: 10px; }
+    [data-testid="stChatMessage"] p { margin-bottom: 12px; }
+    [data-testid="stChatMessage"] h1,
+    [data-testid="stChatMessage"] h2,
+    [data-testid="stChatMessage"] h3 {
+        font-family: 'Lora', Georgia, serif;
+        font-weight: 500;
+        letter-spacing: -0.01em;
+    }
 
     @keyframes fadeUp {
         from { opacity: 0; transform: translateY(3px); }
         to   { opacity: 1; transform: translateY(0); }
     }
 
+    /* ============================================================
+       RACIOCINIO — destaque bonito
+       ============================================================ */
+    [data-testid="stChatMessage"] [data-testid="stExpander"]:has(summary:has-text("Processando raciocinio")),
+    [data-testid="stChatMessage"] [data-testid="stExpander"] {
+        border: 1px solid var(--border-soft) !important;
+        background: var(--bg-think) !important;
+        border-radius: var(--radius-md) !important;
+        margin: 0 0 16px 0 !important;
+        padding: 0 !important;
+        overflow: hidden !important;
+        transition: border-color 0.15s ease, background-color 0.15s ease;
+    }
+    [data-testid="stChatMessage"] [data-testid="stExpander"]:hover {
+        border-color: var(--border) !important;
+    }
+    [data-testid="stChatMessage"] [data-testid="stExpander"] details {
+        border: none !important; background: transparent !important; padding: 0 !important;
+    }
+    [data-testid="stChatMessage"] [data-testid="stExpander"] summary {
+        padding: 10px 14px !important;
+        color: var(--text-dim) !important;
+        list-style: none !important;
+        font-weight: 500 !important;
+        font-size: 12.5px !important;
+        background: transparent !important;
+        display: flex !important; align-items: center !important;
+        transition: color 0.15s ease, background-color 0.15s ease;
+    }
+    [data-testid="stChatMessage"] [data-testid="stExpander"] summary:hover {
+        color: var(--accent) !important;
+        background: rgba(201,100,66,.03) !important;
+    }
+    [data-testid="stChatMessage"] [data-testid="stExpander"] summary p {
+        font-size: 12.5px !important; color: inherit !important;
+        display: inline !important; margin: 0 !important;
+        letter-spacing: 0.02em;
+    }
+    [data-testid="stChatMessage"] [data-testid="stExpander"] summary svg {
+        width: 12px !important; height: 12px !important;
+        opacity: 0.6; margin-right: 8px;
+    }
+    [data-testid="stChatMessage"] [data-testid="stExpanderDetails"] {
+        border: none !important;
+        border-top: 1px solid var(--border-soft) !important;
+        padding: 14px 18px !important;
+        margin: 0 !important;
+        background: transparent !important;
+        animation: slideDown 0.25s ease;
+    }
+    [data-testid="stChatMessage"] [data-testid="stExpanderDetails"] p,
+    [data-testid="stChatMessage"] [data-testid="stExpanderDetails"] li {
+        font-size: 13.5px !important;
+        color: var(--text-dim) !important;
+        line-height: 1.75 !important;
+        font-style: normal !important;
+        opacity: 1 !important;
+    }
+    [data-testid="stChatMessage"] [data-testid="stExpanderDetails"] code {
+        font-size: 12.5px !important;
+        background: var(--bg-code) !important;
+        padding: 2px 6px !important; border-radius: 4px !important;
+    }
+
+    @keyframes slideDown {
+        from { opacity: 0; transform: translateY(-4px); }
+        to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ---- Badge "RACIOCINIO" no topo do expander ---- */
+    .think-badge {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 4px 10px; margin-bottom: 8px;
+        background: rgba(201,100,66,.08);
+        border: 1px solid rgba(201,100,66,.2);
+        border-radius: 999px;
+        font-size: 10.5px; font-weight: 700;
+        color: var(--accent) !important;
+        letter-spacing: 0.1em; text-transform: uppercase;
+    }
+    .think-badge svg { opacity: 0.9; }
+
+    /* ---- Acoes de mensagem ---- */
     .msg-actions {
         display: flex; gap: 14px; align-items: center;
-        margin-top: 8px; opacity: 0;
+        margin-top: 10px; opacity: 0;
         transition: opacity 0.15s ease;
     }
     [data-testid="stChatMessage"]:hover .msg-actions { opacity: 1; }
@@ -966,21 +749,7 @@ st.markdown("""
     }
     .msg-action:hover { color: var(--accent) !important; }
 
-    .artifact-badge {
-        display: inline-flex; align-items: center; gap: 6px;
-        padding: 4px 10px; margin-top: 12px;
-        background: rgba(201,100,66,.08);
-        border: 1px solid rgba(201,100,66,.2);
-        border-radius: 999px;
-        font-size: 11px; font-weight: 600;
-        color: var(--accent) !important;
-        letter-spacing: 0.05em; text-transform: uppercase;
-    }
-    .artifact-badge::before {
-        content: ""; width: 6px; height: 6px;
-        border-radius: 50%; background: var(--accent);
-    }
-
+    /* ---- Form inline de edicao ---- */
     [data-testid="stChatMessage"] [data-testid="stForm"] {
         background: var(--card) !important;
         border: 1px solid var(--accent) !important;
@@ -995,12 +764,13 @@ st.markdown("""
         background: var(--bg) !important;
     }
 
+    /* ---- Code blocks ---- */
     [data-testid="stChatMessage"] [data-testid="stCode"],
     [data-testid="stChatMessage"] pre,
     .stCodeBlock pre {
-        background: var(--bg-code) !important;
+        background: #f7f6f1 !important;
         border: 1px solid var(--border) !important;
-        border-radius: var(--radius-sm) !important;
+        border-radius: var(--radius-md) !important;
     }
     [data-testid="stChatMessage"] pre code,
     [data-testid="stChatMessage"] [data-testid="stCode"] code,
@@ -1008,53 +778,51 @@ st.markdown("""
         background: transparent !important;
         color: var(--text) !important;
         font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace !important;
-        font-size: 12.5px !important; line-height: 1.6 !important;
-    }
-
-    [data-testid="stChatMessage"] [data-testid="stExpander"] {
-        border: none !important; background: transparent !important;
-        margin: 0 0 10px 0 !important; padding: 0 !important;
-    }
-    [data-testid="stChatMessage"] [data-testid="stExpander"] details {
-        border: none !important; background: transparent !important; padding: 0 !important;
-    }
-    [data-testid="stChatMessage"] [data-testid="stExpander"] summary {
-        padding: 2px 0 !important;
-        color: var(--text-mute) !important;
-        list-style: none !important; opacity: 0.8;
-        transition: opacity 0.15s ease, color 0.15s ease;
-    }
-    [data-testid="stChatMessage"] [data-testid="stExpander"] summary:hover {
-        opacity: 1; color: var(--accent) !important;
-    }
-    [data-testid="stChatMessage"] [data-testid="stExpander"] summary p {
-        font-size: 12.5px !important; color: inherit !important; display: inline !important;
-    }
-    [data-testid="stChatMessage"] [data-testid="stExpander"] summary svg {
-        width: 10px !important; height: 10px !important;
-        opacity: 0.6; margin-right: 6px;
-    }
-    [data-testid="stChatMessage"] [data-testid="stExpanderDetails"] {
-        border-left: 2px solid var(--border) !important;
-        padding: 6px 0 6px 14px !important;
-        margin: 6px 0 10px 0 !important;
-    }
-    [data-testid="stChatMessage"] [data-testid="stExpanderDetails"] p {
-        font-size: 12.5px !important;
-        color: var(--text-dim) !important;
-        line-height: 1.65; font-style: italic; opacity: 0.9;
+        font-size: 13px !important; line-height: 1.65 !important;
     }
 
     /* ============================================================
-       COMPOSER pill
+       CURSOR de streaming
+       ============================================================ */
+    .cursor {
+        display: inline-block;
+        width: 7px; height: 1.05em;
+        background: var(--accent);
+        vertical-align: text-bottom;
+        margin-left: 3px;
+        border-radius: 1px;
+        animation: blink 1s step-start infinite;
+        opacity: 0.85;
+    }
+    @keyframes blink { 50% { opacity: 0.15; } }
+
+    .thinking-dots {
+        display: inline-flex; gap: 4px; align-items: center;
+        margin-left: 6px; vertical-align: middle;
+    }
+    .thinking-dots span {
+        width: 5px; height: 5px; border-radius: 50%;
+        background: var(--accent);
+        animation: bounce 1.2s infinite ease-in-out;
+    }
+    .thinking-dots span:nth-child(2) { animation-delay: 0.15s; }
+    .thinking-dots span:nth-child(3) { animation-delay: 0.3s; }
+    @keyframes bounce {
+        0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+        40% { transform: translateY(-4px); opacity: 1; }
+    }
+
+    /* ============================================================
+       COMPOSER pill (fixo no fundo do container de chat)
        ============================================================ */
     [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) {
         background: var(--card) !important;
         border: 1px solid var(--border) !important;
-        border-radius: 22px !important;
-        box-shadow: 0 2px 10px rgba(0,0,0,.05) !important;
-        margin-top: 10px;
-        padding: 4px 6px !important;
+        border-radius: 24px !important;
+        box-shadow: 0 4px 20px rgba(0,0,0,.06) !important;
+        margin: 12px auto 0 auto;
+        max-width: 800px;
+        padding: 6px 8px !important;
     }
     [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) > div > [data-testid="stVerticalBlock"] {
         gap: 0 !important;
@@ -1072,7 +840,7 @@ st.markdown("""
         -webkit-text-fill-color: #1f1e1c !important;
         caret-color: var(--accent) !important;
         font-size: 15px !important;
-        padding: 12px 8px !important;
+        padding: 12px 10px !important;
         height: 48px !important;
         box-shadow: none !important;
     }
@@ -1083,13 +851,13 @@ st.markdown("""
     }
 
     [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stPopover"] > button {
-        width: 40px !important; height: 40px !important; min-width: 40px !important;
+        width: 42px !important; height: 42px !important; min-width: 42px !important;
         padding: 0 !important; font-size: 0 !important; color: transparent !important;
         background-color: transparent !important;
         border: none !important;
         border-radius: 50% !important;
         box-shadow: none !important;
-        background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%239a978e' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21.4 11l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5'/%3E%3C/svg%3E") !important;
+        background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='19' height='19' viewBox='0 0 24 24' fill='none' stroke='%239a978e' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21.4 11l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5'/%3E%3C/svg%3E") !important;
         background-repeat: no-repeat !important;
         background-position: center !important;
         transition: background-color 0.15s ease !important;
@@ -1103,20 +871,21 @@ st.markdown("""
         color: #ffffff !important;
         border: none !important;
         border-radius: 50% !important;
-        width: 40px !important; height: 40px !important; min-width: 40px !important;
+        width: 42px !important; height: 42px !important; min-width: 42px !important;
         padding: 0 !important; font-size: 0 !important;
         box-shadow: 0 1px 2px rgba(201,100,66,.25) !important;
-        transition: background-color 0.15s ease !important;
+        transition: background-color 0.15s ease, transform 0.15s ease !important;
         background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5M5 12l7-7 7 7'/%3E%3C/svg%3E") !important;
         background-repeat: no-repeat !important;
         background-position: center !important;
     }
     [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stFormSubmitButton"] button:hover {
         background-color: var(--accent-hover) !important;
+        transform: translateY(-1px);
     }
 
     .composer-mic {
-        width: 40px !important; height: 40px !important;
+        width: 42px !important; height: 42px !important;
         display: inline-flex !important;
         align-items: center !important; justify-content: center !important;
         color: var(--text-mute) !important;
@@ -1139,7 +908,8 @@ st.markdown("""
         border-radius: 999px;
         font-size: 12px;
         color: var(--text-dim) !important;
-        margin: 4px 0 6px 0;
+        margin: 4px auto 6px auto;
+        max-width: 800px;
     }
     .attach-chip span { color: var(--text-dim) !important; }
     .attach-chip a {
@@ -1149,16 +919,24 @@ st.markdown("""
     }
     .attach-chip a:hover { color: var(--accent) !important; }
 
-    .stop-wrap { display: flex; justify-content: center; margin: 6px 0 10px 0; }
+    /* ============================================================
+       STOP BUTTON
+       ============================================================ */
+    .stop-wrap {
+        display: flex; justify-content: center;
+        margin: 8px auto 12px auto;
+        max-width: 800px;
+    }
     .stop-wrap a {
         display: inline-flex; align-items: center; gap: 6px;
-        padding: 6px 14px;
+        padding: 7px 14px;
         background: var(--card);
         border: 1px solid var(--border);
         border-radius: 999px;
         font-size: 12px; font-weight: 500;
         color: var(--text-dim) !important;
         text-decoration: none !important;
+        box-shadow: var(--shadow-sm);
         transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
     }
     .stop-wrap a:hover {
@@ -1168,84 +946,63 @@ st.markdown("""
     }
 
     /* ============================================================
-       PREVIEW
+       ESTADO VAZIO
        ============================================================ */
-    .preview-empty {
+    .empty-hero {
         display: flex; flex-direction: column;
         align-items: center; justify-content: center;
-        text-align: center; padding: 40px 24px; min-height: 500px;
+        text-align: center;
+        padding: 60px 20px 40px 20px;
+        max-width: 600px; margin: 0 auto;
     }
-    .preview-empty-icon {
-        width: 72px; height: 72px;
+    .empty-hero-mark {
+        width: 52px; height: 52px;
+        background: var(--accent); color: #ffffff;
+        border-radius: 14px;
         display: flex; align-items: center; justify-content: center;
-        background: var(--panel);
-        border: 1px solid var(--border-soft);
-        border-radius: 50%;
-        color: var(--text-mute); margin-bottom: 20px;
-    }
-    .preview-empty-title {
         font-family: 'Lora', Georgia, serif;
-        font-size: 16.5px; font-weight: 500;
-        color: var(--text) !important;
-        margin-bottom: 8px; letter-spacing: -0.01em;
+        font-size: 26px; font-weight: 500;
+        margin-bottom: 22px;
+        box-shadow: 0 4px 14px rgba(201,100,66,.25);
     }
-    .preview-empty-text {
-        font-size: 13px;
+    .empty-hero-title {
+        font-family: 'Lora', Georgia, serif;
+        font-size: 26px; font-weight: 500;
+        color: var(--text) !important;
+        margin-bottom: 10px; letter-spacing: -0.02em;
+    }
+    .empty-hero-sub {
+        font-size: 14px;
         color: var(--text-mute) !important;
-        line-height: 1.6; max-width: 300px; margin-bottom: 20px;
+        line-height: 1.6;
     }
-    .preview-empty-btn {
-        display: inline-flex; align-items: center; gap: 6px;
-        padding: 8px 16px;
-        background: var(--card);
-        color: var(--text) !important;
-        border: 1px solid var(--border);
-        border-radius: 999px;
-        font-size: 13px; font-weight: 500;
-        cursor: pointer; text-decoration: none !important;
-        transition: border-color 0.15s ease, color 0.15s ease;
-    }
-    .preview-empty-btn:hover {
-        border-color: var(--accent);
-        color: var(--accent) !important;
-        text-decoration: none !important;
-    }
-
-    iframe {
-        border: 1px solid var(--border) !important;
-        border-radius: var(--radius-sm) !important;
-        background: #ffffff !important;
-    }
-
-    .cursor {
-        display: inline-block;
-        width: 2px; height: 1.05em;
-        background: var(--accent);
-        vertical-align: text-bottom;
-        margin-left: 2px;
-        animation: blink 1s step-start infinite;
-        opacity: 0.7;
-    }
-    @keyframes blink { 50% { opacity: 0; } }
 
     /* ============================================================
        HISTORICO / PROJETOS / SETTINGS
        ============================================================ */
+    .panel-title {
+        font-family: 'Lora', Georgia, serif;
+        font-size: 20px; font-weight: 500;
+        color: var(--text);
+        max-width: 800px; margin: 0 auto 8px auto;
+        padding: 8px 4px;
+    }
     .hist-row {
         display: flex; align-items: center; justify-content: space-between;
-        padding: 10px 8px;
+        padding: 12px 10px;
         border-bottom: 1px solid var(--border-soft);
         gap: 8px;
         border-radius: var(--radius-sm);
         transition: background-color 0.15s ease;
+        max-width: 800px; margin: 0 auto;
     }
     .hist-row:hover { background: rgba(0,0,0,.02); }
     .hist-row-main { flex: 1 1 auto; min-width: 0; text-decoration: none !important; }
     .hist-title {
-        font-size: 13.5px; font-weight: 500; color: var(--text) !important;
+        font-size: 14px; font-weight: 500; color: var(--text) !important;
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .hist-meta { font-size: 11px; color: var(--text-mute) !important; margin-top: 2px; }
+    .hist-meta { font-size: 11.5px; color: var(--text-mute) !important; margin-top: 2px; }
     .hist-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
     .hist-action {
         color: var(--text-mute) !important; text-decoration: none !important;
@@ -1255,25 +1012,28 @@ st.markdown("""
     .hist-action:hover { color: var(--accent) !important; }
     .hist-action.pinned { color: var(--accent) !important; }
     .panel-empty {
-        padding: 40px 16px; text-align: center;
+        padding: 60px 20px; text-align: center;
         color: var(--text-mute); font-size: 13.5px; line-height: 1.7;
+        max-width: 500px; margin: 0 auto;
     }
     .panel-back {
         display: inline-flex; align-items: center; gap: 6px;
         font-size: 12.5px; font-weight: 500;
         color: var(--text-dim) !important;
-        text-decoration: none !important; margin-bottom: 10px;
+        text-decoration: none !important;
+        margin: 0 auto 12px auto;
+        max-width: 800px;
         transition: color 0.15s ease;
     }
     .panel-back:hover { color: var(--accent) !important; }
     .settings-hint {
-        font-size: 12.5px; color: var(--text-mute) !important;
-        line-height: 1.6; margin-bottom: 10px;
+        font-size: 13px; color: var(--text-mute) !important;
+        line-height: 1.65; margin-bottom: 12px;
     }
     .settings-section {
         font-size: 11px; font-weight: 600; color: var(--text-mute);
         letter-spacing: 0.08em; text-transform: uppercase;
-        margin: 16px 0 8px 0;
+        margin: 18px 0 10px 0;
     }
 
     /* ============================================================
@@ -1346,6 +1106,8 @@ st.markdown("""
         border: 1px solid var(--border) !important;
         background: var(--panel) !important;
         color: var(--text) !important;
+        max-width: 800px;
+        margin-left: auto; margin-right: auto;
     }
     .stAlert * { color: var(--text) !important; }
 
@@ -1401,11 +1163,11 @@ st.markdown("""
     }
 
     @media (max-width: 640px) {
-        .block-container { padding: 0.4rem 0.75rem 0.4rem 0.75rem !important; }
+        .block-container { padding: 0.4rem 0.9rem 0.6rem 0.9rem !important; }
         .app-brand-name { font-size: 15px; }
         .app-status { padding: 4px 8px; font-size: 11px; }
-        .preview-empty { min-height: 340px; padding: 24px 16px; }
-        .preview-empty-icon { width: 60px; height: 60px; margin-bottom: 16px; }
+        .empty-hero-title { font-size: 22px; }
+        .empty-hero { padding: 40px 16px 20px 16px; }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -1424,13 +1186,9 @@ components.html(
         doc.addEventListener('keydown', function (e) {
             if (e.key !== 'Escape') return;
             const url = new URL(window.parent.location.href);
-            const a = url.searchParams.get('a');
-            if (a === 'edit') {
+            if (url.searchParams.get('a') === 'edit') {
                 url.searchParams.set('a', 'cancel_edit');
                 url.searchParams.delete('i');
-                window.parent.location.href = url.toString();
-            } else if (a === 'toggle_artifact_edit') {
-                url.searchParams.set('a', 'cancel_artifact_edit');
                 window.parent.location.href = url.toString();
             }
         });
@@ -1459,7 +1217,7 @@ with st.sidebar:
     </div>
 
     <a class="sb-btn sb-btn-primary" href="?a=new" target="_self">
-        {ICON_PLUS}<span>Novo projeto</span>
+        {ICON_PLUS}<span>Nova conversa</span>
     </a>
 
     <div class="sb-section">Espaco</div>
@@ -1539,12 +1297,10 @@ def _render_settings_panel():
         f'{ICON_ARROWL}<span>Voltar para a conversa</span></a>',
         unsafe_allow_html=True,
     )
-    box = st.container(height=PANEL_HEIGHT)
-    with box:
+    st.markdown('<div class="panel-title">Configuracoes</div>', unsafe_allow_html=True)
+    with st.container():
         st.markdown(
-            '<div style="font-size:15px;font-weight:600;margin-bottom:4px;">'
-            'Personalizacao</div>'
-            '<div class="settings-hint">'
+            '<div class="settings-hint" style="max-width:800px;margin:0 auto 12px auto;">'
             'Escreva como voce quer que o Aether responda (tom, girias, '
             'regras fixas). Isso e enviado junto de toda mensagem, como '
             'uma memoria persistente da conversa.'
@@ -1587,18 +1343,17 @@ def _render_history_panel():
         f'{ICON_ARROWL}<span>Voltar para a conversa</span></a>',
         unsafe_allow_html=True,
     )
-    box = st.container(height=PANEL_HEIGHT)
-    with box:
-        if not st.session_state.conversations:
-            st.markdown(
-                '<div class="panel-empty">Nenhuma conversa salva ainda.<br>'
-                'Conversas anteriores aparecem aqui quando voce clica em '
-                '"Novo projeto".</div>',
-                unsafe_allow_html=True,
-            )
-        else:
-            for c in st.session_state.conversations:
-                st.markdown(_hist_row_html(c), unsafe_allow_html=True)
+    st.markdown('<div class="panel-title">Historico</div>', unsafe_allow_html=True)
+    if not st.session_state.conversations:
+        st.markdown(
+            '<div class="panel-empty">Nenhuma conversa salva ainda.<br>'
+            'Conversas anteriores aparecem aqui quando voce clica em '
+            '"Nova conversa".</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        for c in st.session_state.conversations:
+            st.markdown(_hist_row_html(c), unsafe_allow_html=True)
 
 
 def _render_projects_panel():
@@ -1607,582 +1362,336 @@ def _render_projects_panel():
         f'{ICON_ARROWL}<span>Voltar para a conversa</span></a>',
         unsafe_allow_html=True,
     )
-    box = st.container(height=PANEL_HEIGHT)
-    with box:
-        if st.session_state.messages:
-            default_title = next(
-                (m["content"] for m in st.session_state.messages if m["role"] == "user"),
-                "Meu projeto",
-            )
-            with st.form("save_project_form", clear_on_submit=True):
-                name = st.text_input(
-                    "Nome do projeto",
-                    value=(default_title or "Meu projeto").strip().splitlines()[0][:42],
-                )
-                saved = st.form_submit_button(
-                    "Salvar conversa atual como projeto", use_container_width=True,
-                )
-                if saved:
-                    _snapshot_conversation(pinned=True, title=name.strip() or "Projeto")
-                    st.toast("Projeto salvo", icon=":material/bookmark:")
-            st.markdown('<div style="height:8px;"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="panel-title">Projetos</div>', unsafe_allow_html=True)
 
-        pinned = [c for c in st.session_state.conversations if c.get("pinned")]
-        if not pinned:
-            st.markdown(
-                '<div class="panel-empty">Nenhum projeto salvo ainda.<br>'
-                'Salve a conversa atual acima, ou marque uma conversa do '
-                'historico com a estrela.</div>',
-                unsafe_allow_html=True,
+    if st.session_state.messages:
+        default_title = next(
+            (m["content"] for m in st.session_state.messages if m["role"] == "user"),
+            "Meu projeto",
+        )
+        with st.form("save_project_form", clear_on_submit=True):
+            name = st.text_input(
+                "Nome do projeto",
+                value=(default_title or "Meu projeto").strip().splitlines()[0][:42],
             )
-        else:
-            for c in pinned:
-                st.markdown(_hist_row_html(c), unsafe_allow_html=True)
+            saved = st.form_submit_button(
+                "Salvar conversa atual como projeto", use_container_width=True,
+            )
+            if saved:
+                _snapshot_conversation(pinned=True, title=name.strip() or "Projeto")
+                st.toast("Projeto salvo", icon=":material/bookmark:")
+
+    pinned = [c for c in st.session_state.conversations if c.get("pinned")]
+    if not pinned:
+        st.markdown(
+            '<div class="panel-empty" style="padding-top:30px;">'
+            'Nenhum projeto salvo ainda.<br>'
+            'Salve a conversa atual acima, ou marque uma conversa do '
+            'historico com a estrela.</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        for c in pinned:
+            st.markdown(_hist_row_html(c), unsafe_allow_html=True)
 
 
 # ============================================================
-# LAYOUT
+# PAINEL ATIVO
 # ============================================================
-col_chat, col_preview = st.columns([1, 1.15], gap="medium")
+_panel_active = (
+    st.session_state.show_settings
+    or st.session_state.show_history
+    or st.session_state.show_projects
+)
 
-
-# ------------------------------------------------------------
-# CHAT
-# ------------------------------------------------------------
-_do_rerun = False
-
-with col_chat:
-
-    _panel_title = (
-        "Configuracoes" if st.session_state.show_settings
-        else "Historico" if st.session_state.show_history
-        else "Projetos" if st.session_state.show_projects
-        else "Conversa"
-    )
-    st.markdown(
-        f'<div class="panel-label"><span class="panel-label-title">{_panel_title}</span></div>',
-        unsafe_allow_html=True,
-    )
-
-    _prompt = st.session_state.pending_prompt
-    st.session_state.pending_prompt = None
-
-    if _prompt:
-        if st.session_state.attached_text:
-            _prompt = (
-                f"{_prompt}\n\n"
-                f"[Arquivo anexado: {st.session_state.attached_name}]\n"
-                f"```\n{st.session_state.attached_text[:4000]}\n```"
-            )
-        st.session_state.messages.append({"role": "user", "content": _prompt})
-        salvar_historico_no_disco()
-
+if _panel_active:
     if st.session_state.show_settings:
         _render_settings_panel()
     elif st.session_state.show_history:
         _render_history_panel()
     elif st.session_state.show_projects:
         _render_projects_panel()
-    else:
-        _query = (st.session_state.search_query or "").strip().lower()
-
-        chat_box = st.container(height=PANEL_HEIGHT)
-
-        with chat_box:
-            if not st.session_state.messages:
-                st.markdown(
-                    '<div style="padding: 60px 20px; text-align: center; '
-                    'color: #9a978e; font-size: 14px; font-family: Lora, serif;">'
-                    'Como posso ajudar hoje?'
-                    '</div>',
-                    unsafe_allow_html=True,
-                )
-
-            for i, msg in enumerate(st.session_state.messages):
-                if _query and _query not in (msg.get("content") or "").lower():
-                    continue
-
-                if msg["role"] == "user":
-                    with st.chat_message("user", avatar=_AVATAR_USER):
-                        if st.session_state.editing_idx == i:
-                            with st.form(f"edit_form_{i}", clear_on_submit=False):
-                                st.markdown(
-                                    '<div style="font-size:11px;font-weight:600;'
-                                    'color:#c96442;letter-spacing:.08em;'
-                                    'text-transform:uppercase;margin-bottom:6px;">'
-                                    'Editando mensagem'
-                                    '</div>',
-                                    unsafe_allow_html=True,
-                                )
-                                new_text = st.text_area(
-                                    "Editar",
-                                    value=msg["content"],
-                                    key=f"edit_area_{i}",
-                                    label_visibility="collapsed",
-                                    height=130,
-                                )
-                                cc1, cc2 = st.columns([1.4, 1])
-                                with cc1:
-                                    save = st.form_submit_button(
-                                        "Salvar e reenviar", use_container_width=True,
-                                    )
-                                with cc2:
-                                    cancel = st.form_submit_button(
-                                        "Cancelar", use_container_width=True,
-                                    )
-                                if save and new_text.strip():
-                                    st.session_state.messages = st.session_state.messages[:i]
-                                    st.session_state.pending_prompt = new_text.strip()
-                                    st.session_state.editing_idx = None
-                                    st.rerun()
-                                if cancel:
-                                    st.session_state.editing_idx = None
-                                    st.rerun()
-                        else:
-                            st.markdown(msg["content"])
-                            st.markdown(
-                                f'<div class="msg-actions">'
-                                f'<a class="msg-action" href="?a=edit&i={i}" target="_self">'
-                                f'{ICON_EDIT}<span>editar</span></a>'
-                                f'</div>',
-                                unsafe_allow_html=True,
-                            )
-                else:
-                    with st.chat_message("assistant", avatar=_AVATAR_AI):
-                        if msg.get("thinking"):
-                            with st.expander("Processando raciocinio"):
-                                st.markdown(msg["thinking"])
-                        if msg.get("content"):
-                            st.markdown(msg["content"])
-                        if msg.get("has_artifact"):
-                            _fnames = msg.get("artifact_files") or []
-                            _badge_extra = (
-                                " · " + ", ".join(_fnames) if len(_fnames) > 1 else ""
-                            )
-                            st.markdown(
-                                '<span class="artifact-badge">Artifact '
-                                f'{(msg.get("artifact_lang") or "html").upper()}'
-                                f'{_badge_extra}</span>',
-                                unsafe_allow_html=True,
-                            )
-                        is_last = (i == len(st.session_state.messages) - 1)
-                        if is_last:
-                            st.markdown(
-                                f'<div class="msg-actions">'
-                                f'<a class="msg-action" href="?a=regen" target="_self">'
-                                f'{ICON_REFRESH}<span>regenerar</span></a>'
-                                f'</div>',
-                                unsafe_allow_html=True,
-                            )
-
-            if _prompt:
-                with st.chat_message("assistant", avatar=_AVATAR_AI):
-
-                    stop_holder = st.empty()
-                    with stop_holder:
-                        st.markdown(
-                            f'<div class="stop-wrap">'
-                            f'<a href="?a=stop_generation" target="_self">'
-                            f'{ICON_STOP}<span>Parar geracao</span></a>'
-                            f'</div>',
-                            unsafe_allow_html=True,
-                        )
-
-                    thinking_slot = st.expander("Processando raciocinio", expanded=False)
-                    with thinking_slot:
-                        thinking_body = st.empty()
-
-                    text_body = st.empty()
-
-                    raw_buffer = ""
-                    reasoning_accum = ""
-
-                    try:
-                        api_messages = (
-                            [{"role": "system", "content": build_system_prompt()}]
-                            + st.session_state.messages
-                        )
-
-                        completion = client.chat.completions.create(
-                            model=MODEL,
-                            messages=api_messages,
-                            temperature=st.session_state.temperature,
-                            top_p=st.session_state.top_p,
-                            max_tokens=st.session_state.max_tokens,
-                            extra_body={"chat_template_kwargs": {"enable_thinking": True}},
-                            stream=True,
-                        )
-
-                        for chunk in completion:
-                            if st.session_state.get("stop_requested"):
-                                break
-                            if not chunk.choices:
-                                continue
-                            delta = chunk.choices[0].delta
-
-                            reasoning = getattr(delta, "reasoning_content", None)
-                            if reasoning:
-                                reasoning_accum += reasoning
-                                thinking_body.markdown(
-                                    reasoning_accum + '<span class="cursor"></span>',
-                                    unsafe_allow_html=True,
-                                )
-
-                            if delta.content:
-                                raw_buffer += delta.content
-
-                                partial_visible, partial_think = extract_thinking(raw_buffer)
-                                partial_visible, _, _ = extract_artifact(partial_visible)
-                                partial_visible = _strip_dangling(partial_visible)
-                                partial_visible = _maybe_strip_emojis(partial_visible)
-
-                                combined = "\n\n".join(
-                                    filter(None, [reasoning_accum, partial_think])
-                                )
-                                if combined:
-                                    thinking_body.markdown(
-                                        combined + '<span class="cursor"></span>',
-                                        unsafe_allow_html=True,
-                                    )
-                                if partial_visible:
-                                    text_body.markdown(
-                                        partial_visible + '<span class="cursor"></span>',
-                                        unsafe_allow_html=True,
-                                    )
-
-                        stop_holder.empty()
-
-                        parsed = parse_response(raw_buffer)
-                        final_thinking = "\n\n".join(
-                            filter(None, [reasoning_accum, parsed["thinking"]])
-                        )
-
-                        if final_thinking:
-                            thinking_body.markdown(final_thinking)
-                        else:
-                            thinking_body.markdown("_Sem raciocinio exposto._")
-
-                        text_body.markdown(parsed["text"] or "_Sem resposta._")
-
-                        has_artifact = bool(parsed["artifact_raw"])
-                        art_lang = parsed["lang"]
-                        files_dict = {}
-                        preview_html = None
-
-                        if has_artifact:
-                            files_dict = _parse_files(parsed["artifact_raw"])
-                            preview_html = _build_preview_html(files_dict)
-
-                            st.session_state.artifact_versions.append({
-                                "code":     preview_html,
-                                "files":    files_dict,
-                                "lang":     art_lang,
-                                "ts":       datetime.now().strftime("%H:%M:%S"),
-                                "prompt":   (st.session_state.messages[-1]["content"] or "")[:60],
-                                "thinking": final_thinking,
-                            })
-                            st.session_state.artifact_version_idx = (
-                                len(st.session_state.artifact_versions) - 1
-                            )
-                            st.session_state.current_artifact = preview_html
-                            st.session_state.current_files = files_dict
-                            st.session_state.current_thinking = final_thinking
-                            st.session_state.artifact_lang = art_lang
-                            st.session_state.preview_view = "preview"
-                            st.session_state.selected_file = None
-
-                            _fnames = list(files_dict.keys())
-                            _badge_extra = (
-                                " · " + ", ".join(_fnames) if len(_fnames) > 1 else ""
-                            )
-                            st.markdown(
-                                '<span class="artifact-badge">Artifact '
-                                f'{(art_lang or "html").upper()}{_badge_extra}</span>',
-                                unsafe_allow_html=True,
-                            )
-
-                        st.session_state.messages.append({
-                            "role":            "assistant",
-                            "content":         parsed["text"],
-                            "thinking":        final_thinking,
-                            "has_artifact":    has_artifact,
-                            "artifact_lang":   art_lang if has_artifact else None,
-                            "artifact_files":  list(files_dict.keys()) if has_artifact else [],
-                        })
-                        salvar_historico_no_disco()
-
-                    except Exception as e:
-                        st.error(f"Falha ao processar resposta: {e}")
-                        st.session_state.messages.append({
-                            "role":     "assistant",
-                            "content":  f"Erro: {e}",
-                            "thinking": "",
-                        })
-                        salvar_historico_no_disco()
-
-                st.session_state.stop_requested = False
-                st.session_state.attached_name = None
-                st.session_state.attached_text = None
-                _do_rerun = True
-
-        if st.session_state.attached_name:
-            st.markdown(
-                f'<div class="attach-chip">'
-                f'<span>{st.session_state.attached_name}</span>'
-                f'<a href="?a=clear_attach" target="_self" title="Remover">remover</a>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-
-        with st.form("composer", clear_on_submit=True):
-            c1, c2, c3, c4 = st.columns(
-                [0.35, 6, 0.35, 0.7],
-                gap="small",
-                vertical_alignment="center",
-            )
-            with c1:
-                with st.popover("Anexar", use_container_width=False):
-                    uploaded = st.file_uploader(
-                        "Anexar arquivo",
-                        type=["txt", "md", "py", "js", "html", "css", "json"],
-                        label_visibility="collapsed",
-                    )
-                    if uploaded is not None:
-                        try:
-                            st.session_state.attached_name = uploaded.name
-                            st.session_state.attached_text = uploaded.read().decode(
-                                "utf-8", errors="ignore"
-                            )
-                            st.success(f"Anexado: {uploaded.name}")
-                        except Exception as e:
-                            st.error(f"Erro ao ler arquivo: {e}")
-
-            with c2:
-                user_msg = st.text_input(
-                    "mensagem",
-                    placeholder="Envie uma mensagem para o Aether Engine...",
-                    label_visibility="collapsed",
-                )
-            with c3:
-                st.markdown(
-                    f'<a class="composer-mic" href="?a=mic" target="_self" '
-                    f'title="Gravar audio">{ICON_MIC}</a>',
-                    unsafe_allow_html=True,
-                )
-            with c4:
-                submitted = st.form_submit_button("Enviar")
-
-        if submitted and user_msg.strip():
-            st.session_state.pending_prompt = user_msg.strip()
-            st.rerun()
+    st.stop()
 
 
-# ------------------------------------------------------------
-# PREVIEW
-# ------------------------------------------------------------
-with col_preview:
+# ============================================================
+# CHAT
+# ============================================================
+_do_rerun = False
 
-    has_art = bool(st.session_state.current_artifact)
-    total_v = len(st.session_state.get("artifact_versions", []))
-    cur_v   = st.session_state.get("artifact_version_idx", -1) + 1 if total_v else 0
-    files_dict = st.session_state.current_files or {}
-    is_multi_file = len(files_dict) > 1
+_prompt = st.session_state.pending_prompt
+st.session_state.pending_prompt = None
 
-    hdr_l, hdr_toggle, hdr_v, hdr_t, hdr_e, hdr_r = st.columns(
-        [2.2, 0.55, 1.35, 0.55, 0.55, 1.6],
-        gap="small",
-        vertical_alignment="center",
-    )
-
-    with hdr_l:
-        st.markdown(
-            '<div class="panel-label" style="padding:0;margin:0;">'
-            '<span class="panel-label-title">Preview</span></div>',
-            unsafe_allow_html=True,
+if _prompt:
+    if st.session_state.attached_text:
+        _prompt = (
+            f"{_prompt}\n\n"
+            f"[Arquivo anexado: {st.session_state.attached_name}]\n"
+            f"```\n{st.session_state.attached_text[:4000]}\n```"
         )
+    st.session_state.messages.append({"role": "user", "content": _prompt})
+    salvar_historico_no_disco()
 
-    with hdr_toggle:
-        if has_art:
-            if st.session_state.preview_view == "preview":
-                st.markdown(
-                    f'<a class="panel-tool" href="?a=view_code" target="_self" '
-                    f'title="Ver codigo">{ICON_CODE}</a>',
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.markdown(
-                    f'<a class="panel-tool" href="?a=view_preview" target="_self" '
-                    f'title="Ver preview">{ICON_EYE}</a>',
-                    unsafe_allow_html=True,
-                )
+_query = (st.session_state.search_query or "").strip().lower()
 
-    with hdr_v:
-        if has_art and total_v > 0:
-            st.markdown(
-                f'<div class="version-nav">'
-                f'<a href="?a=artifact_prev" target="_self" title="Versao anterior">{ICON_BACK}</a>'
-                f'<span>{cur_v}/{total_v}</span>'
-                f'<a href="?a=artifact_next" target="_self" title="Proxima versao">{ICON_NEXT}</a>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
 
-    with hdr_t:
-        st.markdown(
-            f'<a class="panel-tool" href="?a=refresh" target="_self" '
-            f'title="Atualizar">{ICON_REFRESH}</a>',
-            unsafe_allow_html=True,
-        )
+# ---- Render das mensagens ----
+if not st.session_state.messages:
+    st.markdown("""
+    <div class="empty-hero">
+        <div class="empty-hero-mark">A</div>
+        <div class="empty-hero-title">Como posso ajudar hoje?</div>
+        <div class="empty-hero-sub">
+            Pergunte qualquer coisa, peca codigo, analise, ideias.<br>
+            O raciocinio do modelo aparece em tempo real durante a resposta.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    with hdr_e:
-        if has_art and st.session_state.preview_view == "preview":
-            tool_href = (
-                "?a=cancel_artifact_edit"
-                if st.session_state.artifact_edit_mode
-                else "?a=toggle_artifact_edit"
-            )
-            tool_title = (
-                "Fechar edicao" if st.session_state.artifact_edit_mode
-                else "Editar codigo"
-            )
-            st.markdown(
-                f'<a class="panel-tool" href="{tool_href}" target="_self" '
-                f'title="{tool_title}">{ICON_EDIT}</a>',
-                unsafe_allow_html=True,
-            )
+for i, msg in enumerate(st.session_state.messages):
+    if _query and _query not in (msg.get("content") or "").lower():
+        continue
 
-    with hdr_r:
-        if has_art:
-            st.download_button(
-                label="Baixar HTML",
-                data=st.session_state.current_artifact,
-                file_name=_download_filename(),
-                mime="text/html",
-                use_container_width=True,
-                key="dl_artifact",
-            )
-
-    preview_box = st.container(height=PANEL_HEIGHT)
-
-    with preview_box:
-        if not has_art:
-            st.markdown(f"""
-            <div class="preview-empty">
-                <div class="preview-empty-icon">{ICON_IMAGE}</div>
-                <div class="preview-empty-title">Seu preview aparecera aqui</div>
-                <div class="preview-empty-text">
-                    Peca ao Aether para gerar uma interface ou componente visual.
-                </div>
-                <a class="preview-empty-btn" href="?a=example" target="_self">
-                    Ver exemplo
-                </a>
-            </div>
-            """, unsafe_allow_html=True)
-
-        else:
-            if st.session_state.current_thinking or is_multi_file:
-                with st.expander("Raciocinio da IA", expanded=False):
-                    if st.session_state.current_thinking:
-                        st.markdown(st.session_state.current_thinking)
-                    if files_dict:
-                        _names = ", ".join(f"`{n}`" for n in files_dict.keys())
-                        st.markdown(f"**Arquivos gerados:** {_names}")
-
-            if st.session_state.preview_view == "code":
-                file_names = list(files_dict.keys())
-                if (
-                    st.session_state.selected_file not in file_names
-                    and file_names
-                ):
-                    st.session_state.selected_file = file_names[0]
-
-                f_col1, f_col2 = st.columns([1, 2.4], gap="small")
-                with f_col1:
-                    st.markdown(
-                        '<div style="font-size:11px;font-weight:600;'
-                        'color:var(--text-mute);letter-spacing:.08em;'
-                        'text-transform:uppercase;margin-bottom:8px;">'
-                        'Arquivos</div>',
-                        unsafe_allow_html=True,
-                    )
-                    for fname in file_names:
-                        if st.button(
-                            fname,
-                            key=f"filebtn_{fname}_{st.session_state.artifact_version_idx}",
-                            use_container_width=True,
-                        ):
-                            st.session_state.selected_file = fname
-                            st.rerun()
-
-                with f_col2:
-                    if st.session_state.selected_file:
-                        _ext = st.session_state.selected_file.rsplit(".", 1)[-1].lower()
-                        _lang_map = {
-                            "html": "html", "css": "css", "js": "javascript",
-                            "jsx": "jsx", "json": "json", "py": "python",
-                            "md": "markdown",
-                        }
-                        st.code(
-                            files_dict[st.session_state.selected_file],
-                            language=_lang_map.get(_ext, "text"),
-                        )
-
-            elif st.session_state.artifact_edit_mode:
-                _edit_key = f"artifact_edit_area_{st.session_state.artifact_version_idx}"
-                with st.form("artifact_edit_form", clear_on_submit=False):
+    if msg["role"] == "user":
+        with st.chat_message("user", avatar=_AVATAR_USER):
+            if st.session_state.editing_idx == i:
+                with st.form(f"edit_form_{i}", clear_on_submit=False):
                     st.markdown(
                         '<div style="font-size:11px;font-weight:600;'
                         'color:#c96442;letter-spacing:.08em;'
                         'text-transform:uppercase;margin-bottom:6px;">'
-                        'Editando artifact (HTML combinado)'
+                        'Editando mensagem'
                         '</div>',
                         unsafe_allow_html=True,
                     )
-                    edited = st.text_area(
-                        "Codigo",
-                        value=st.session_state.current_artifact,
-                        height=IFRAME_HEIGHT - 110,
+                    new_text = st.text_area(
+                        "Editar",
+                        value=msg["content"],
+                        key=f"edit_area_{i}",
                         label_visibility="collapsed",
-                        key=_edit_key,
+                        height=130,
                     )
-                    ec1, ec2 = st.columns([1.4, 1])
-                    with ec1:
-                        apply_edit = st.form_submit_button(
-                            "Aplicar", use_container_width=True,
+                    cc1, cc2 = st.columns([1.4, 1])
+                    with cc1:
+                        save = st.form_submit_button(
+                            "Salvar e reenviar", use_container_width=True,
                         )
-                    with ec2:
-                        cancel_edit = st.form_submit_button(
+                    with cc2:
+                        cancel = st.form_submit_button(
                             "Cancelar", use_container_width=True,
                         )
-                    if apply_edit:
-                        st.session_state.current_artifact = edited
-                        st.session_state.current_files = {"index.html": edited}
-                        if (
-                            st.session_state.artifact_versions
-                            and 0 <= st.session_state.artifact_version_idx
-                            < len(st.session_state.artifact_versions)
-                        ):
-                            _v = st.session_state.artifact_versions[
-                                st.session_state.artifact_version_idx
-                            ]
-                            _v["code"] = edited
-                            _v["files"] = {"index.html": edited}
-                        st.session_state.artifact_edit_mode = False
+                    if save and new_text.strip():
+                        st.session_state.messages = st.session_state.messages[:i]
+                        st.session_state.pending_prompt = new_text.strip()
+                        st.session_state.editing_idx = None
                         st.rerun()
-                    if cancel_edit:
-                        st.session_state.artifact_edit_mode = False
+                    if cancel:
+                        st.session_state.editing_idx = None
                         st.rerun()
-
             else:
-                _cache_bust = (
-                    f"\n<!-- aether-preview-refresh:{st.session_state.refresh_counter}"
-                    f"-v{st.session_state.artifact_version_idx} -->"
+                st.markdown(msg["content"])
+                st.markdown(
+                    f'<div class="msg-actions">'
+                    f'<a class="msg-action" href="?a=edit&i={i}" target="_self">'
+                    f'{ICON_EDIT}<span>editar</span></a>'
+                    f'</div>',
+                    unsafe_allow_html=True,
                 )
-                components.html(
-                    st.session_state.current_artifact + _cache_bust,
-                    height=IFRAME_HEIGHT,
-                    scrolling=True,
+    else:
+        with st.chat_message("assistant", avatar=_AVATAR_AI):
+            if msg.get("thinking"):
+                with st.expander("Raciocinio do modelo"):
+                    st.markdown(
+                        f'<div class="think-badge">{ICON_BRAIN}<span>Aether pensou</span></div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown(msg["thinking"])
+            if msg.get("content"):
+                st.markdown(msg["content"])
+            is_last = (i == len(st.session_state.messages) - 1)
+            if is_last:
+                st.markdown(
+                    f'<div class="msg-actions">'
+                    f'<a class="msg-action" href="?a=regen" target="_self">'
+                    f'{ICON_REFRESH}<span>regenerar</span></a>'
+                    f'</div>',
+                    unsafe_allow_html=True,
                 )
+
+
+# ---- Streaming ----
+if _prompt:
+    with st.chat_message("assistant", avatar=_AVATAR_AI):
+
+        stop_holder = st.empty()
+        with stop_holder:
+            st.markdown(
+                f'<div class="stop-wrap">'
+                f'<a href="?a=stop_generation" target="_self">'
+                f'{ICON_STOP}<span>Parar geracao</span></a>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+        thinking_slot = st.expander("Raciocinio do modelo", expanded=True)
+        with thinking_slot:
+            thinking_badge = st.empty()
+            thinking_badge.markdown(
+                f'<div class="think-badge">{ICON_BRAIN}<span>Aether pensou</span></div>',
+                unsafe_allow_html=True,
+            )
+            thinking_body = st.empty()
+            thinking_body.markdown(
+                '<span class="thinking-dots"><span></span><span></span><span></span></span>',
+                unsafe_allow_html=True,
+            )
+
+        text_body = st.empty()
+
+        raw_buffer = ""
+        reasoning_accum = ""
+
+        try:
+            api_messages = (
+                [{"role": "system", "content": build_system_prompt()}]
+                + st.session_state.messages
+            )
+
+            completion = client.chat.completions.create(
+                model=MODEL,
+                messages=api_messages,
+                temperature=st.session_state.temperature,
+                top_p=st.session_state.top_p,
+                max_tokens=st.session_state.max_tokens,
+                extra_body={"chat_template_kwargs": {"enable_thinking": True}},
+                stream=True,
+            )
+
+            for chunk in completion:
+                if st.session_state.get("stop_requested"):
+                    break
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+
+                reasoning = getattr(delta, "reasoning_content", None)
+                if reasoning:
+                    reasoning_accum += reasoning
+                    thinking_body.markdown(
+                        reasoning_accum + '<span class="cursor"></span>',
+                        unsafe_allow_html=True,
+                    )
+
+                if delta.content:
+                    raw_buffer += delta.content
+
+                    partial_visible, partial_think = extract_thinking(raw_buffer)
+                    partial_visible = strip_artifacts(partial_visible)
+                    partial_visible = _strip_dangling(partial_visible)
+
+                    combined = "\n\n".join(
+                        filter(None, [reasoning_accum, partial_think])
+                    )
+                    if combined:
+                        thinking_body.markdown(
+                            combined + '<span class="cursor"></span>',
+                            unsafe_allow_html=True,
+                        )
+                    if partial_visible:
+                        text_body.markdown(
+                            partial_visible + '<span class="cursor"></span>',
+                            unsafe_allow_html=True,
+                        )
+
+            stop_holder.empty()
+
+            parsed = parse_response(raw_buffer)
+            final_thinking = "\n\n".join(
+                filter(None, [reasoning_accum, parsed["thinking"]])
+            )
+
+            if final_thinking:
+                thinking_body.markdown(final_thinking)
+            else:
+                thinking_body.markdown("_Sem raciocinio exposto._")
+
+            text_body.markdown(parsed["text"] or "_Sem resposta._")
+
+            st.session_state.messages.append({
+                "role":     "assistant",
+                "content":  parsed["text"],
+                "thinking": final_thinking,
+            })
+            salvar_historico_no_disco()
+
+        except Exception as e:
+            st.error(f"Falha ao processar resposta: {e}")
+            st.session_state.messages.append({
+                "role":     "assistant",
+                "content":  f"Erro: {e}",
+                "thinking": "",
+            })
+            salvar_historico_no_disco()
+
+    st.session_state.stop_requested = False
+    st.session_state.attached_name = None
+    st.session_state.attached_text = None
+    _do_rerun = True
+
+
+# ---- Anexo chip ----
+if st.session_state.attached_name:
+    st.markdown(
+        f'<div class="attach-chip">'
+        f'<span>{st.session_state.attached_name}</span>'
+        f'<a href="?a=clear_attach" target="_self" title="Remover">remover</a>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+# ---- Composer ----
+with st.form("composer", clear_on_submit=True):
+    c1, c2, c3, c4 = st.columns(
+        [0.35, 6, 0.35, 0.7],
+        gap="small",
+        vertical_alignment="center",
+    )
+    with c1:
+        with st.popover("Anexar", use_container_width=False):
+            uploaded = st.file_uploader(
+                "Anexar arquivo",
+                type=["txt", "md", "py", "js", "html", "css", "json"],
+                label_visibility="collapsed",
+            )
+            if uploaded is not None:
+                try:
+                    st.session_state.attached_name = uploaded.name
+                    st.session_state.attached_text = uploaded.read().decode(
+                        "utf-8", errors="ignore"
+                    )
+                    st.success(f"Anexado: {uploaded.name}")
+                except Exception as e:
+                    st.error(f"Erro ao ler arquivo: {e}")
+
+    with c2:
+        user_msg = st.text_input(
+            "mensagem",
+            placeholder="Envie uma mensagem para o Aether Engine...",
+            label_visibility="collapsed",
+        )
+    with c3:
+        st.markdown(
+            f'<a class="composer-mic" href="?a=mic" target="_self" '
+            f'title="Gravar audio">{ICON_MIC}</a>',
+            unsafe_allow_html=True,
+        )
+    with c4:
+        submitted = st.form_submit_button("Enviar")
+
+if submitted and user_msg.strip():
+    st.session_state.pending_prompt = user_msg.strip()
+    st.rerun()
 
 
 # ============================================================
