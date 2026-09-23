@@ -1,9 +1,7 @@
 """
 Aether Engine — AI workspace
 -----------------------------
-Layout: sidebar nativa + header + 2 colunas (chat | preview).
-Chat com historico/projetos/configuracoes funcionais.
-Preview com file tree + raciocinio da IA (estilo "Arena").
+Layout Claude-like: sidebar + chat centralizado + preview de artifact.
 """
 
 import os
@@ -19,10 +17,9 @@ from openai import OpenAI
 
 
 # ============================================================
-# PERSISTENCIA SIMPLES (best-effort)
+# PERSISTENCIA SIMPLES (best-effort, tolera FS read-only)
 # ============================================================
 def salvar_historico_no_disco():
-    """Salva as mensagens em disco. Silencioso se o FS for read-only."""
     try:
         with open("backup_chat.pkl", "wb") as f:
             pickle.dump(st.session_state.messages, f)
@@ -123,17 +120,12 @@ Strict rules:
    output, wrap the complete code inside <artifact>...</artifact> tags.
 4. Inside <artifact>, either:
    a) write one full standalone HTML document (with <!DOCTYPE html>), or
-   b) split it into multiple files using this format, when it makes sense
-      for the request (e.g. a small app with separate structure):
+   b) split it into multiple files using this format:
       <file name="index.html">...</file>
       <file name="style.css">...</file>
       <file name="script.js">...</file>
-      One of the files must be named index.html and must be a full HTML
-      document (it can reference the css/js conceptually; they will be
-      inlined automatically for preview).
-5. Before or while producing the artifact, briefly narrate what you are
-   doing in plain text outside the tags (e.g. "Lendo o pedido, vou criar
-   index.html e style.css...") so the user can follow your reasoning.
+      One of the files must be named index.html.
+5. Before producing the artifact, briefly narrate what you are doing.
 6. Do not add commentary about the artifact outside the tags beyond a
    short summary.
 """
@@ -145,8 +137,7 @@ def build_system_prompt() -> str:
     if custom:
         prompt += (
             "\n\nUser personalization instructions (ALWAYS follow these, "
-            "they override the default tone/style, even rule 1 about being "
-            "purely technical if they conflict):\n" + custom
+            "they override the default tone/style):\n" + custom
         )
     return prompt
 
@@ -171,7 +162,7 @@ st.set_page_config(
 
 
 # ============================================================
-# SESSION STATE  (BUG 1 FIX: todas as chaves agora estao aqui)
+# SESSION STATE
 # ============================================================
 _DEFAULTS = {
     "messages":             carregar_historico_do_disco(),
@@ -253,7 +244,6 @@ def _snapshot_conversation(pinned: bool = False, title: str = None):
 
 
 def _load_conversation(conv_id: str) -> bool:
-    """BUG 6 FIX: usa .get() para tolerar conversas antigas sem as chaves novas."""
     for c in st.session_state.conversations:
         if c["id"] == conv_id:
             st.session_state.messages            = c.get("messages", [])
@@ -352,22 +342,18 @@ if _action:
                 pass
         st.rerun()
 
-    # ---- BUG 3 FIX: handler de stop_generation ----
     elif _action == "stop_generation":
         st.session_state.stop_requested = True
 
-    # ---- BUG 4 FIX: handler de cancel_edit (usado pelo atalho Esc) ----
     elif _action == "cancel_edit":
         st.session_state.editing_idx = None
 
-    # ---- Edicao de mensagem ----
     elif _action == "edit" and _idx_qp is not None:
         try:
             st.session_state.editing_idx = int(_idx_qp)
         except ValueError:
             st.session_state.editing_idx = None
 
-    # ---- Regenerar ----
     elif _action == "regen":
         msgs = st.session_state.messages
         if msgs and msgs[-1]["role"] == "assistant":
@@ -377,7 +363,6 @@ if _action:
             st.session_state.pending_prompt = last_user["content"]
         st.rerun()
 
-    # ---- Navegacao de versoes ----
     elif _action == "artifact_prev":
         if st.session_state.artifact_versions:
             i = st.session_state.artifact_version_idx - 1
@@ -557,46 +542,49 @@ def _download_filename() -> str:
 # ============================================================
 # CONSTANTES DE LAYOUT
 # ============================================================
-PANEL_HEIGHT = 610
-IFRAME_HEIGHT = 560
+PANEL_HEIGHT  = 640
+IFRAME_HEIGHT = 580
 
 
 # ============================================================
-# CSS
+# CSS — Claude-like UI + fix do texto branco no composer
 # ============================================================
 st.markdown("""
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lora:wght@400;500&display=swap" rel="stylesheet">
 """, unsafe_allow_html=True)
 
 st.markdown("""
 <style>
     :root, html, body { color-scheme: light !important; }
     :root {
-        --background-color: #fafaf9 !important;
-        --text-color: #1a1a1a !important;
+        --background-color: #fafaf7 !important;
+        --text-color: #1f1e1c !important;
         --secondary-background-color: #ffffff !important;
         --primary-color: #c96442 !important;
     }
     :root {
-        --bg:           #fafaf9;
+        --bg:           #fafaf7;
+        --bg-2:         #f5f4ee;
         --card:         #ffffff;
-        --panel:        #f5f5f3;
-        --bg-user:      #f0eee6;
-        --bg-code:      #f5f5f3;
-        --border:       #e8e8e5;
-        --border-soft:  #f0f0ed;
-        --text:         #1a1a1a;
-        --text-dim:     #666666;
-        --text-mute:    #999999;
+        --panel:        #f1efe8;
+        --bg-user:      #edeae0;
+        --bg-code:      #f5f4ee;
+        --border:       #e6e3d8;
+        --border-soft:  #efecdf;
+        --text:         #1f1e1c;
+        --text-dim:     #66635b;
+        --text-mute:    #9a978e;
         --accent:       #c96442;
         --accent-hover: #b85738;
         --shadow-sm:    0 1px 2px rgba(0,0,0,.03);
+        --shadow-md:    0 4px 14px rgba(0,0,0,.06);
         --radius-sm:    8px;
-        --radius-md:    10px;
-        --radius-lg:    14px;
-        --panel-h:      610px;
+        --radius-md:    12px;
+        --radius-lg:    18px;
+        --panel-h:      640px;
+        --chat-max:     720px;
     }
 
     #MainMenu { visibility: hidden; }
@@ -620,9 +608,7 @@ st.markdown("""
     .stForm small {
         display: none !important;
         visibility: hidden !important;
-        height: 0 !important;
-        width: 0 !important;
-        opacity: 0 !important;
+        height: 0 !important; width: 0 !important; opacity: 0 !important;
     }
 
     html, body, [class*="css"], .stApp {
@@ -638,10 +624,41 @@ st.markdown("""
     }
 
     .block-container {
-        padding: 0.5rem 1.25rem 0.4rem 1.25rem !important;
+        padding: 0.6rem 1.4rem 0.6rem 1.4rem !important;
         max-width: 100% !important;
     }
 
+    /* ============================================================
+       FIX DO TEXTO BRANCO — aplica em TODOS os inputs / textareas
+       do app, sem depender do tema do SO/navegador.
+       ============================================================ */
+    input,
+    textarea,
+    [contenteditable],
+    [data-testid="stTextInput"] input,
+    [data-testid="stTextArea"] textarea,
+    [data-baseweb="input"] input,
+    [data-baseweb="textarea"] textarea,
+    [data-baseweb="base-input"] input,
+    .stTextInput input,
+    .stTextArea textarea,
+    .stNumberInput input,
+    .stChatInput textarea,
+    section[data-testid="stSidebar"] input {
+        color: #1f1e1c !important;
+        -webkit-text-fill-color: #1f1e1c !important;
+        caret-color: #c96442 !important;
+    }
+    input::placeholder,
+    textarea::placeholder,
+    [data-baseweb="input"] input::placeholder,
+    [data-baseweb="textarea"] textarea::placeholder {
+        color: #9a978e !important;
+        -webkit-text-fill-color: #9a978e !important;
+        opacity: 1 !important;
+    }
+
+    /* markdown geral */
     .stMarkdown, .stMarkdown p, .stMarkdown li, .stMarkdown span,
     .stMarkdown div, .stMarkdown strong, .stMarkdown em, .stMarkdown a,
     .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown h4,
@@ -654,27 +671,37 @@ st.markdown("""
         background: var(--bg-code) !important;
     }
 
+    /* ============================================================
+       ALTURA FIXA DOS PAINEIS
+       ============================================================ */
     [data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="stVerticalBlock"]),
     [data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stVerticalBlock"]) {
         height: var(--panel-h) !important;
         max-height: var(--panel-h) !important;
         min-height: var(--panel-h) !important;
         overflow: hidden !important;
+        background: var(--card) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: var(--radius-lg) !important;
+        box-shadow: var(--shadow-sm);
     }
     [data-testid="stVerticalBlockBorderWrapper"] > div {
         height: 100% !important;
         overflow-y: auto !important;
     }
 
+    /* ============================================================
+       SIDEBAR (Claude-like)
+       ============================================================ */
     section[data-testid="stSidebar"] {
-        width: 220px !important;
-        min-width: 220px !important;
-        max-width: 220px !important;
-        background-color: var(--card) !important;
-        border-right: 1px solid var(--border) !important;
+        width: 248px !important;
+        min-width: 248px !important;
+        max-width: 248px !important;
+        background-color: var(--bg-2) !important;
+        border-right: 1px solid var(--border-soft) !important;
     }
     section[data-testid="stSidebar"] > div:first-child {
-        padding: 1rem 0.85rem !important;
+        padding: 1rem 0.9rem !important;
     }
     section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
         gap: 0.15rem !important;
@@ -684,10 +711,10 @@ st.markdown("""
     button[kind="header"] { display: none !important; }
 
     section[data-testid="stSidebar"] [data-testid="stTextInput"] input {
-        font-size: 12.5px !important;
-        height: 32px !important;
-        padding: 4px 10px !important;
-        background: var(--panel) !important;
+        font-size: 13px !important;
+        height: 34px !important;
+        padding: 4px 12px !important;
+        background: var(--card) !important;
         border: 1px solid var(--border-soft) !important;
         border-radius: var(--radius-sm) !important;
     }
@@ -695,25 +722,23 @@ st.markdown("""
     .sb-brand {
         display: flex; align-items: center; gap: 10px;
         padding: 4px 2px 14px 2px; margin-bottom: 6px;
-        border-bottom: 1px solid var(--border-soft);
     }
     .sb-brand-mark {
-        width: 32px; height: 32px;
+        width: 30px; height: 30px;
         background: var(--accent); color: #ffffff;
-        border-radius: var(--radius-md);
+        border-radius: 8px;
         display: flex; align-items: center; justify-content: center;
-        font-family: Georgia, "Times New Roman", serif;
-        font-size: 17px; font-weight: 500; flex-shrink: 0;
-        box-shadow: 0 2px 6px rgba(201,100,66,.22);
+        font-family: 'Lora', Georgia, serif;
+        font-size: 16px; font-weight: 500; flex-shrink: 0;
     }
     .sb-brand-info { display: flex; flex-direction: column; line-height: 1.15; }
-    .sb-brand-name { font-size: 13.5px; font-weight: 600; color: var(--text); letter-spacing: -0.01em; }
+    .sb-brand-name { font-size: 14px; font-weight: 600; color: var(--text); letter-spacing: -0.01em; }
     .sb-brand-tag  { font-size: 10.5px; color: var(--text-mute); letter-spacing: 0.02em; }
 
     .sb-section {
-        font-size: 10px; font-weight: 600;
-        color: var(--text-mute); letter-spacing: 0.09em;
-        text-transform: uppercase; padding: 14px 8px 6px 8px;
+        font-size: 10.5px; font-weight: 600;
+        color: var(--text-mute); letter-spacing: 0.1em;
+        text-transform: uppercase; padding: 16px 8px 6px 8px;
     }
 
     .sb-btn {
@@ -721,98 +746,87 @@ st.markdown("""
         padding: 8px 10px; margin: 1px 0;
         border-radius: var(--radius-sm);
         color: var(--text-dim) !important;
-        font-size: 13px; font-weight: 500;
+        font-size: 13.5px; font-weight: 500;
         text-decoration: none !important;
         transition: background-color 0.15s ease, color 0.15s ease;
         cursor: pointer; line-height: 1.2;
     }
-    .sb-btn:hover { background: var(--panel); color: var(--text) !important; }
-    .sb-btn svg { flex-shrink: 0; opacity: 0.75; }
+    .sb-btn:hover { background: rgba(0,0,0,.04); color: var(--text) !important; }
+    .sb-btn svg { flex-shrink: 0; opacity: 0.7; }
     .sb-btn:hover svg { opacity: 1; }
     .sb-btn span { color: inherit; }
-    .sb-btn.active { background: var(--panel); color: var(--accent) !important; }
+    .sb-btn.active { background: rgba(201,100,66,.08); color: var(--accent) !important; }
+    .sb-btn.active svg { opacity: 1; }
 
     .sb-btn-primary {
         background: var(--accent); color: #ffffff !important;
-        box-shadow: 0 1px 3px rgba(201,100,66,.25); margin-bottom: 4px;
+        box-shadow: 0 1px 2px rgba(201,100,66,.2); margin-bottom: 4px;
+        font-weight: 600;
     }
     .sb-btn-primary:hover { background: var(--accent-hover); color: #ffffff !important; }
     .sb-btn-primary svg { opacity: 1; }
 
-    .stApp p, .stApp span, .stApp li, .stApp label, .stApp div { color: var(--text); }
-
-    input, textarea,
-    [data-testid="stTextInput"] input,
-    [data-testid="stTextArea"] textarea,
-    [data-baseweb="input"] input,
-    [data-baseweb="textarea"] textarea {
-        color: var(--text) !important;
-        -webkit-text-fill-color: var(--text) !important;
-        caret-color: var(--accent) !important;
-        background-color: transparent !important;
-    }
-    input::placeholder, textarea::placeholder {
-        color: var(--text-mute) !important;
-        -webkit-text-fill-color: var(--text-mute) !important;
-        opacity: 1 !important;
-    }
-
+    /* ============================================================
+       HEADER — bem mais discreto, quase ausente
+       ============================================================ */
     .app-header {
         display: flex; align-items: center; justify-content: space-between;
-        padding: 12px 20px; background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: var(--radius-md);
-        margin-bottom: 10px; box-shadow: var(--shadow-sm);
+        padding: 4px 6px 12px 6px;
+        background: transparent;
+        border: none; margin-bottom: 6px;
     }
-    .app-header-left { display: flex; align-items: center; gap: 12px; }
-    .app-brand-mark {
-        width: 34px; height: 34px;
-        background: var(--accent); color: #ffffff;
-        border-radius: var(--radius-md);
-        display: flex; align-items: center; justify-content: center;
-        font-family: Georgia, "Times New Roman", serif;
-        font-size: 18px; font-weight: 500;
-        box-shadow: 0 2px 6px rgba(201,100,66,.22); flex-shrink: 0;
-    }
+    .app-header-left { display: flex; align-items: center; gap: 10px; }
     .app-brand-info { line-height: 1.15; }
-    .app-brand-name { font-size: 15px; font-weight: 600; color: var(--text); letter-spacing: -0.015em; }
-    .app-brand-tag  { font-size: 11.5px; color: var(--text-mute); margin-top: 1px; }
+    .app-brand-name {
+        font-family: 'Lora', Georgia, serif;
+        font-size: 17px; font-weight: 500;
+        color: var(--text); letter-spacing: -0.01em;
+    }
+    .app-brand-tag  { font-size: 11px; color: var(--text-mute); margin-top: 1px; }
     .app-status {
         display: inline-flex; align-items: center; gap: 7px;
-        padding: 6px 12px; background: var(--panel);
+        padding: 4px 10px;
+        background: transparent;
         border: 1px solid var(--border-soft);
-        border-radius: 999px; font-size: 12px; font-weight: 500;
+        border-radius: 999px;
+        font-size: 11.5px; font-weight: 500;
         color: var(--text-dim);
     }
     .app-status-dot {
-        width: 7px; height: 7px; border-radius: 50%;
-        background: #6ba944; box-shadow: 0 0 0 3px rgba(107,169,68,.15);
+        width: 6px; height: 6px; border-radius: 50%;
+        background: #6ba944;
+        box-shadow: 0 0 0 3px rgba(107,169,68,.15);
     }
 
+    /* ============================================================
+       PANEL LABELS / TOOLS
+       ============================================================ */
     .panel-label {
         display: flex; align-items: center; justify-content: space-between;
-        padding: 2px 4px 8px 4px;
+        padding: 2px 2px 8px 2px;
         font-size: 11px; font-weight: 600;
         color: var(--text-mute); letter-spacing: 0.1em;
         text-transform: uppercase;
     }
     .panel-label-title { display: flex; align-items: center; gap: 8px; }
-    .panel-label-tools { display: flex; gap: 3px; align-items: center; }
     .panel-tool {
-        width: 28px; height: 28px;
+        width: 30px; height: 30px;
         display: flex; align-items: center; justify-content: center;
         color: var(--text-mute) !important;
-        border-radius: 6px; text-decoration: none !important;
+        border-radius: 8px;
+        text-decoration: none !important;
         cursor: pointer;
         transition: background-color 0.15s ease, color 0.15s ease;
     }
-    .panel-tool:hover { background: var(--panel); color: var(--accent) !important; }
-    .panel-tool.active { background: var(--panel); color: var(--accent) !important; }
+    .panel-tool:hover { background: rgba(0,0,0,.05); color: var(--accent) !important; }
+    .panel-tool.active { background: rgba(201,100,66,.1); color: var(--accent) !important; }
 
     .version-nav {
         display: inline-flex; align-items: center; gap: 2px;
-        background: var(--panel); border: 1px solid var(--border-soft);
-        border-radius: var(--radius-sm); padding: 2px;
+        background: var(--panel);
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius-sm);
+        padding: 2px;
         font-size: 11.5px; color: var(--text-dim);
     }
     .version-nav a {
@@ -828,6 +842,9 @@ st.markdown("""
         font-size: 11.5px; color: var(--text-dim) !important;
     }
 
+    /* ============================================================
+       DOWNLOAD BUTTON
+       ============================================================ */
     [data-testid="stDownloadButton"] { margin: 0 !important; padding: 0 !important; }
     [data-testid="stDownloadButton"] > button {
         background: var(--card) !important;
@@ -835,7 +852,7 @@ st.markdown("""
         border: 1px solid var(--border) !important;
         border-radius: var(--radius-sm) !important;
         font-size: 12px !important; font-weight: 500 !important;
-        height: 28px !important; min-height: 28px !important;
+        height: 30px !important; min-height: 30px !important;
         padding: 0 10px 0 8px !important;
         width: 100% !important; box-shadow: none !important;
         display: inline-flex !important;
@@ -854,18 +871,13 @@ st.markdown("""
         margin: 0 !important; white-space: nowrap !important;
     }
 
-    [data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stVerticalBlock"]) {
-        background: var(--card) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: var(--radius-md) !important;
-        box-shadow: var(--shadow-sm);
-        padding: 4px 18px !important;
-    }
-
+    /* ============================================================
+       CHAT — Claude-like
+       ============================================================ */
     [data-testid="stChatMessage"] {
         background: transparent !important;
         border: none !important; border-radius: 0 !important;
-        padding: 6px 0 !important; margin-bottom: 8px !important;
+        padding: 4px 0 !important; margin-bottom: 18px !important;
         box-shadow: none !important;
         display: flex !important; flex-direction: row !important;
         align-items: flex-start !important; gap: 0 !important;
@@ -882,41 +894,41 @@ st.markdown("""
         border: none !important; border-radius: 0 !important;
     }
 
+    /* user */
     [data-testid="stChatMessage"]:has(img[src*="useravatar"]) {
         flex-direction: row-reverse !important;
-        margin: 6px 0 12px 0 !important;
+        margin: 4px 0 24px 0 !important;
     }
     [data-testid="stChatMessage"]:has(img[src*="useravatar"]) [data-testid="stChatMessageContent"] {
         background: var(--bg-user) !important;
-        border: 1px solid var(--border-soft) !important;
-        border-radius: var(--radius-lg) !important;
-        padding: 12px 18px !important;
-        max-width: 82% !important; flex: 0 1 auto !important;
+        border: none !important;
+        border-radius: 16px !important;
+        padding: 10px 16px !important;
+        max-width: 78% !important; flex: 0 1 auto !important;
     }
 
-    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) { margin-bottom: 16px !important; }
-    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stChatMessageContent"]::before {
-        content: "AETHER"; display: block;
-        font-size: 10.5px; font-weight: 700;
-        color: var(--text-mute); letter-spacing: 0.1em;
-        margin-bottom: 8px;
+    /* assistant */
+    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) {
+        margin-bottom: 22px !important;
     }
 
     [data-testid="stChatMessage"] p,
     [data-testid="stChatMessage"] span,
     [data-testid="stChatMessage"] li {
         color: var(--text) !important;
-        font-size: 14.5px; line-height: 1.65;
+        font-size: 15px; line-height: 1.7;
     }
+    [data-testid="stChatMessage"] p { margin-bottom: 10px; }
 
     @keyframes fadeUp {
         from { opacity: 0; transform: translateY(3px); }
         to   { opacity: 1; transform: translateY(0); }
     }
 
+    /* ---- Acoes de mensagem ---- */
     .msg-actions {
-        display: flex; gap: 12px; align-items: center;
-        margin-top: 6px; opacity: 0;
+        display: flex; gap: 14px; align-items: center;
+        margin-top: 8px; opacity: 0;
         transition: opacity 0.15s ease;
     }
     [data-testid="stChatMessage"]:hover .msg-actions { opacity: 1; }
@@ -932,36 +944,35 @@ st.markdown("""
 
     .artifact-badge {
         display: inline-flex; align-items: center; gap: 6px;
-        padding: 4px 10px; margin-top: 10px;
+        padding: 4px 10px; margin-top: 12px;
         background: rgba(201,100,66,.08);
-        border: 1px solid rgba(201,100,66,.22);
+        border: 1px solid rgba(201,100,66,.2);
         border-radius: 999px;
         font-size: 11px; font-weight: 600;
         color: var(--accent) !important;
-        letter-spacing: 0.06em; text-transform: uppercase;
+        letter-spacing: 0.05em; text-transform: uppercase;
     }
     .artifact-badge::before {
         content: ""; width: 6px; height: 6px;
         border-radius: 50%; background: var(--accent);
     }
 
-    [data-testid="stForm"] {
-        background: var(--card) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: var(--radius-lg) !important;
-        padding: 10px 12px !important;
-    }
+    /* ---- Form inline de edicao ---- */
     [data-testid="stChatMessage"] [data-testid="stForm"] {
+        background: var(--card) !important;
         border: 1px solid var(--accent) !important;
-        padding: 8px 10px !important; margin-top: 6px !important;
+        border-radius: var(--radius-md) !important;
+        padding: 10px 12px !important; margin-top: 6px !important;
     }
     [data-testid="stTextArea"] textarea {
         font-size: 14px !important; line-height: 1.55 !important;
         border: 1px solid var(--border) !important;
         border-radius: var(--radius-sm) !important;
-        padding: 8px 10px !important; background: var(--bg) !important;
+        padding: 10px 12px !important;
+        background: var(--bg) !important;
     }
 
+    /* ---- Code blocks dentro do chat ---- */
     [data-testid="stChatMessage"] [data-testid="stCode"],
     [data-testid="stChatMessage"] pre,
     .stCodeBlock pre {
@@ -977,36 +988,14 @@ st.markdown("""
         font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace !important;
         font-size: 12.5px !important; line-height: 1.6 !important;
     }
-    [data-testid="stChatMessage"] p code,
-    [data-testid="stChatMessage"] li code {
-        background: var(--bg-code) !important;
-        color: var(--text) !important;
-        padding: 2px 6px !important;
-        border-radius: 4px !important;
-        border: 1px solid var(--border-soft) !important;
-        font-size: 12.5px !important;
-    }
 
-    [data-testid="stExpander"] {
-        border: 1px solid var(--border-soft) !important;
-        background: var(--panel) !important;
-        border-radius: var(--radius-sm) !important;
-        margin: 0 0 8px 0 !important;
-    }
+    /* ---- Expander (thinking) ---- */
     [data-testid="stChatMessage"] [data-testid="stExpander"] {
         border: none !important; background: transparent !important;
-        margin: 0 0 8px 0 !important; padding: 0 !important;
+        margin: 0 0 10px 0 !important; padding: 0 !important;
     }
     [data-testid="stChatMessage"] [data-testid="stExpander"] details {
         border: none !important; background: transparent !important; padding: 0 !important;
-    }
-    [data-testid="stExpander"] summary {
-        padding: 6px 10px !important;
-        font-size: 12px !important;
-        color: var(--text-dim) !important;
-        font-weight: 500 !important;
-        background: transparent !important;
-        border: none !important;
     }
     [data-testid="stChatMessage"] [data-testid="stExpander"] summary {
         padding: 2px 0 !important;
@@ -1018,18 +1007,14 @@ st.markdown("""
         opacity: 1; color: var(--accent) !important;
     }
     [data-testid="stChatMessage"] [data-testid="stExpander"] summary p {
-        font-size: 12px !important; color: inherit !important; display: inline !important;
+        font-size: 12.5px !important; color: inherit !important; display: inline !important;
     }
     [data-testid="stChatMessage"] [data-testid="stExpander"] summary svg {
         width: 10px !important; height: 10px !important;
         opacity: 0.6; margin-right: 6px;
     }
-    [data-testid="stExpanderDetails"] {
-        padding: 6px 10px 10px 10px !important;
-        background: transparent !important;
-    }
     [data-testid="stChatMessage"] [data-testid="stExpanderDetails"] {
-        border-left: 2px solid var(--border-soft) !important;
+        border-left: 2px solid var(--border) !important;
         padding: 6px 0 6px 14px !important;
         margin: 6px 0 10px 0 !important;
     }
@@ -1039,29 +1024,22 @@ st.markdown("""
         line-height: 1.65; font-style: italic; opacity: 0.9;
     }
 
-    [data-testid="stFormSubmitButton"] button {
-        background: var(--card) !important;
-        color: var(--text-dim) !important;
-        border: 1px solid var(--border) !important;
-        border-radius: var(--radius-sm) !important;
-        font-weight: 500 !important;
-        font-size: 13px !important;
-        box-shadow: none !important;
-    }
-    [data-testid="stFormSubmitButton"] button:hover {
-        border-color: var(--accent) !important;
-        color: var(--accent) !important;
-        background: rgba(201,100,66,.03) !important;
-    }
-    [data-testid="stFormSubmitButton"] button p { color: inherit !important; margin: 0 !important; }
-
+    /* ============================================================
+       COMPOSER — pill flutuante, Claude-like
+       ============================================================ */
     [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) {
-        box-shadow: 0 2px 8px rgba(0,0,0,.04);
-        margin-top: 4px; padding: 6px 10px !important;
+        background: var(--card) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: 22px !important;
+        box-shadow: 0 2px 10px rgba(0,0,0,.05) !important;
+        margin-top: 10px;
+        padding: 4px 6px !important;
     }
-    [data-testid="stForm"] > div > [data-testid="stVerticalBlock"] { gap: 0 !important; }
-    [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
-        align-items: center !important; gap: 6px !important;
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) > div > [data-testid="stVerticalBlock"] {
+        gap: 0 !important;
+    }
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stHorizontalBlock"] {
+        align-items: center !important; gap: 4px !important;
     }
     [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stTextInput"] > div {
         border: none !important; background: transparent !important; box-shadow: none !important;
@@ -1069,12 +1047,12 @@ st.markdown("""
     [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stTextInput"] input {
         background: transparent !important;
         border: none !important;
-        color: var(--text) !important;
-        -webkit-text-fill-color: var(--text) !important;
+        color: #1f1e1c !important;
+        -webkit-text-fill-color: #1f1e1c !important;
         caret-color: var(--accent) !important;
-        font-size: 14.5px !important;
-        padding: 12px 6px !important;
-        height: 44px !important;
+        font-size: 15px !important;
+        padding: 12px 8px !important;
+        height: 48px !important;
         box-shadow: none !important;
     }
     [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stTextInput"] input::placeholder {
@@ -1087,35 +1065,33 @@ st.markdown("""
         width: 40px !important; height: 40px !important; min-width: 40px !important;
         padding: 0 !important; font-size: 0 !important; color: transparent !important;
         background-color: transparent !important;
-        border: 1px solid var(--border-soft) !important;
-        border-radius: var(--radius-sm) !important;
+        border: none !important;
+        border-radius: 50% !important;
         box-shadow: none !important;
-        background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%23999999' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21.4 11l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5'/%3E%3C/svg%3E") !important;
+        background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%239a978e' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21.4 11l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5'/%3E%3C/svg%3E") !important;
         background-repeat: no-repeat !important;
         background-position: center !important;
-        transition: border-color 0.15s ease, background-color 0.15s ease !important;
+        transition: background-color 0.15s ease, border-color 0.15s ease !important;
     }
     [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stPopover"] > button:hover {
         background-color: var(--panel) !important;
-        border-color: var(--accent) !important;
     }
 
     [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stFormSubmitButton"] button {
         background: var(--accent) !important;
         color: #ffffff !important;
         border: none !important;
-        border-radius: var(--radius-sm) !important;
-        width: 44px !important; height: 44px !important; min-width: 44px !important;
+        border-radius: 50% !important;
+        width: 40px !important; height: 40px !important; min-width: 40px !important;
         padding: 0 !important; font-size: 0 !important;
-        box-shadow: 0 2px 6px rgba(201,100,66,.28) !important;
+        box-shadow: 0 1px 2px rgba(201,100,66,.25) !important;
         transition: background-color 0.15s ease, transform 0.15s ease !important;
-        background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 2L11 13M22 2l-7 20-4-9-9-4z'/%3E%3C/svg%3E") !important;
+        background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5M5 12l7-7 7 7'/%3E%3C/svg%3E") !important;
         background-repeat: no-repeat !important;
         background-position: center !important;
     }
     [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stFormSubmitButton"] button:hover {
         background-color: var(--accent-hover) !important;
-        transform: translateY(-1px);
     }
 
     .composer-mic {
@@ -1123,13 +1099,12 @@ st.markdown("""
         display: inline-flex !important;
         align-items: center !important; justify-content: center !important;
         color: var(--text-mute) !important;
-        border: 1px solid var(--border-soft) !important;
-        border-radius: var(--radius-sm) !important;
+        border: none !important;
+        border-radius: 50% !important;
         text-decoration: none !important; background: transparent;
-        transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+        transition: background-color 0.15s ease, color 0.15s ease;
     }
     .composer-mic:hover {
-        border-color: var(--accent) !important;
         color: var(--accent) !important;
         background: var(--panel);
         text-decoration: none !important;
@@ -1140,7 +1115,7 @@ st.markdown("""
         padding: 6px 12px;
         background: var(--panel);
         border: 1px solid var(--border-soft);
-        border-radius: var(--radius-sm);
+        border-radius: 999px;
         font-size: 12px;
         color: var(--text-dim) !important;
         margin: 4px 0 6px 0;
@@ -1153,10 +1128,10 @@ st.markdown("""
     }
     .attach-chip a:hover { color: var(--accent) !important; }
 
-    .stop-wrap { display: flex; justify-content: center; margin: 4px 0 8px 0; }
+    .stop-wrap { display: flex; justify-content: center; margin: 6px 0 10px 0; }
     .stop-wrap a {
         display: inline-flex; align-items: center; gap: 6px;
-        padding: 6px 12px;
+        padding: 6px 14px;
         background: var(--card);
         border: 1px solid var(--border);
         border-radius: 999px;
@@ -1171,28 +1146,32 @@ st.markdown("""
         background: rgba(201,100,66,.04);
     }
 
+    /* ============================================================
+       PREVIEW vazio
+       ============================================================ */
     .preview-empty {
         display: flex; flex-direction: column;
         align-items: center; justify-content: center;
-        text-align: center; padding: 40px 24px; min-height: 480px;
+        text-align: center; padding: 40px 24px; min-height: 500px;
     }
     .preview-empty-icon {
-        width: 78px; height: 78px;
+        width: 72px; height: 72px;
         display: flex; align-items: center; justify-content: center;
         background: var(--panel);
         border: 1px solid var(--border-soft);
         border-radius: 50%;
-        color: var(--text-mute); margin-bottom: 22px;
+        color: var(--text-mute); margin-bottom: 20px;
     }
     .preview-empty-title {
-        font-size: 15.5px; font-weight: 600;
+        font-family: 'Lora', Georgia, serif;
+        font-size: 16.5px; font-weight: 500;
         color: var(--text) !important;
         margin-bottom: 8px; letter-spacing: -0.01em;
     }
     .preview-empty-text {
         font-size: 13px;
         color: var(--text-mute) !important;
-        line-height: 1.6; max-width: 320px; margin-bottom: 20px;
+        line-height: 1.6; max-width: 300px; margin-bottom: 20px;
     }
     .preview-empty-btn {
         display: inline-flex; align-items: center; gap: 6px;
@@ -1200,7 +1179,7 @@ st.markdown("""
         background: var(--card);
         color: var(--text) !important;
         border: 1px solid var(--border);
-        border-radius: var(--radius-sm);
+        border-radius: 999px;
         font-size: 13px; font-weight: 500;
         cursor: pointer; text-decoration: none !important;
         transition: border-color 0.15s ease, color 0.15s ease;
@@ -1228,20 +1207,18 @@ st.markdown("""
     }
     @keyframes blink { 50% { opacity: 0; } }
 
-    .file-row {
-        display: flex; align-items: center; gap: 8px;
-        padding: 7px 10px; border-radius: var(--radius-sm);
-        font-size: 12.5px; color: var(--text-dim) !important;
-        cursor: pointer; margin-bottom: 2px;
-    }
-    .file-row.active { background: var(--panel); color: var(--accent) !important; font-weight: 600; }
-
+    /* ============================================================
+       HISTORICO / PROJETOS / SETTINGS
+       ============================================================ */
     .hist-row {
         display: flex; align-items: center; justify-content: space-between;
-        padding: 10px 6px;
+        padding: 10px 8px;
         border-bottom: 1px solid var(--border-soft);
         gap: 8px;
+        border-radius: var(--radius-sm);
+        transition: background-color 0.15s ease;
     }
+    .hist-row:hover { background: rgba(0,0,0,.02); }
     .hist-row-main { flex: 1 1 auto; min-width: 0; text-decoration: none !important; }
     .hist-title {
         font-size: 13.5px; font-weight: 500; color: var(--text) !important;
@@ -1257,19 +1234,19 @@ st.markdown("""
     .hist-action:hover { color: var(--accent) !important; }
     .hist-action.pinned { color: var(--accent) !important; }
     .panel-empty {
-        padding: 30px 10px; text-align: center;
-        color: var(--text-mute); font-size: 13px; line-height: 1.6;
+        padding: 40px 16px; text-align: center;
+        color: var(--text-mute); font-size: 13.5px; line-height: 1.7;
     }
     .panel-back {
         display: inline-flex; align-items: center; gap: 6px;
         font-size: 12.5px; font-weight: 500;
         color: var(--text-dim) !important;
-        text-decoration: none !important; margin-bottom: 8px;
+        text-decoration: none !important; margin-bottom: 10px;
         transition: color 0.15s ease;
     }
     .panel-back:hover { color: var(--accent) !important; }
     .settings-hint {
-        font-size: 12px; color: var(--text-mute) !important;
+        font-size: 12.5px; color: var(--text-mute) !important;
         line-height: 1.6; margin-bottom: 10px;
     }
     .settings-section {
@@ -1278,6 +1255,9 @@ st.markdown("""
         margin: 16px 0 8px 0;
     }
 
+    /* ============================================================
+       BOTOES GENERICOS
+       ============================================================ */
     .stButton > button {
         background: var(--card) !important;
         color: var(--text-dim) !important;
@@ -1297,6 +1277,23 @@ st.markdown("""
     .stButton > button:focus { box-shadow: none !important; outline: none !important; }
     .stButton > button p { color: inherit !important; margin: 0 !important; }
 
+    /* form submit de outros forms (settings/editar/etc) */
+    [data-testid="stFormSubmitButton"] button {
+        background: var(--card) !important;
+        color: var(--text-dim) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: var(--radius-sm) !important;
+        font-weight: 500 !important;
+        font-size: 13px !important;
+        box-shadow: none !important;
+    }
+    [data-testid="stFormSubmitButton"] button:hover {
+        border-color: var(--accent) !important;
+        color: var(--accent) !important;
+        background: rgba(201,100,66,.03) !important;
+    }
+    [data-testid="stFormSubmitButton"] button p { color: inherit !important; margin: 0 !important; }
+
     [data-testid="stPopover"] > button {
         background: var(--card) !important;
         color: var(--text-dim) !important;
@@ -1307,7 +1304,7 @@ st.markdown("""
         background: var(--card) !important;
         border: 1px solid var(--border) !important;
         border-radius: var(--radius-md) !important;
-        box-shadow: 0 4px 20px rgba(0,0,0,.08) !important;
+        box-shadow: var(--shadow-md) !important;
         color: var(--text) !important;
     }
     [data-testid="stPopoverBody"] * { color: var(--text) !important; }
@@ -1337,15 +1334,18 @@ st.markdown("""
         border: 1px solid var(--border) !important;
         border-radius: var(--radius-md) !important;
         color: var(--text) !important;
-        box-shadow: 0 4px 16px rgba(0,0,0,.08) !important;
+        box-shadow: var(--shadow-md) !important;
     }
     [data-testid="stToast"] * { color: var(--text) !important; }
 
     ::-webkit-scrollbar { width: 8px; height: 8px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #dedbd3; border-radius: 4px; }
-    ::-webkit-scrollbar-thumb:hover { background: #c9c6be; }
+    ::-webkit-scrollbar-thumb { background: #d9d5c8; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #c9c4b3; }
 
+    /* ============================================================
+       MOBILE
+       ============================================================ */
     [data-testid="stSidebarNav"] { display: none !important; }
 
     @media (max-width: 900px) {
@@ -1376,34 +1376,23 @@ st.markdown("""
         section[data-testid="stSidebar"][aria-expanded="true"] {
             transition: margin-left 0.2s ease;
         }
-        .app-header {
-            padding: 10px 14px 10px 56px !important;
-            margin-bottom: 8px;
-        }
+        .app-header { padding: 4px 4px 10px 52px !important; }
         .app-brand-tag { display: none; }
-
-        [data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stVerticalBlock"]) {
-            height: var(--panel-h) !important;
-            max-height: var(--panel-h) !important;
-            min-height: var(--panel-h) !important;
-        }
-        .preview-empty { min-height: 420px; padding: 30px 20px; }
     }
 
     @media (max-width: 640px) {
         .block-container { padding: 0.4rem 0.75rem 0.4rem 0.75rem !important; }
-        .app-header { padding: 8px 12px 8px 52px !important; }
-        .app-brand-name { font-size: 14px; }
-        .app-status { padding: 5px 10px; font-size: 11px; }
+        .app-brand-name { font-size: 15px; }
+        .app-status { padding: 4px 8px; font-size: 11px; }
         .preview-empty { min-height: 340px; padding: 24px 16px; }
-        .preview-empty-icon { width: 64px; height: 64px; margin-bottom: 16px; }
+        .preview-empty-icon { width: 60px; height: 60px; margin-bottom: 16px; }
     }
 </style>
 """, unsafe_allow_html=True)
 
 
 # ============================================================
-# ATALHO ESC: cancela edicao (agora o handler existe no router)
+# ATALHO ESC
 # ============================================================
 components.html(
     """
@@ -1471,7 +1460,6 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     st.markdown('<div class="sb-section">Busca</div>', unsafe_allow_html=True)
-    # BUG 6b FIX: usa apenas a key do widget, evita conflito com value=
     _search_input = st.text_input(
         "Buscar na conversa",
         placeholder="Filtrar mensagens...",
@@ -1482,12 +1470,11 @@ with st.sidebar:
 
 
 # ============================================================
-# APP HEADER
+# APP HEADER (discreto)
 # ============================================================
 st.markdown("""
 <div class="app-header">
     <div class="app-header-left">
-        <div class="app-brand-mark">A</div>
         <div class="app-brand-info">
             <div class="app-brand-name">Aether Engine</div>
             <div class="app-brand-tag">Espaco de trabalho conversacional</div>
@@ -1535,7 +1522,7 @@ def _render_settings_panel():
     box = st.container(height=PANEL_HEIGHT)
     with box:
         st.markdown(
-            '<div style="font-size:14px;font-weight:600;margin-bottom:4px;">'
+            '<div style="font-size:15px;font-weight:600;margin-bottom:4px;">'
             'Personalizacao</div>'
             '<div class="settings-hint">'
             'Escreva como voce quer que o Aether responda (tom, girias, '
@@ -1660,8 +1647,6 @@ with col_chat:
     _prompt = st.session_state.pending_prompt
     st.session_state.pending_prompt = None
 
-    # BUG 2 FIX: o append da mensagem do usuario acontece SEMPRE,
-    # nao somente quando ha arquivo anexado.
     if _prompt:
         if st.session_state.attached_text:
             _prompt = (
@@ -1686,9 +1671,9 @@ with col_chat:
         with chat_box:
             if not st.session_state.messages:
                 st.markdown(
-                    '<div style="padding: 40px 20px; text-align: center; '
-                    'color: #999; font-size: 13px;">'
-                    'Envie uma mensagem para comecar uma nova conversa.'
+                    '<div style="padding: 60px 20px; text-align: center; '
+                    'color: #9a978e; font-size: 14px; font-family: Lora, serif;">'
+                    'Como posso ajudar hoje?'
                     '</div>',
                     unsafe_allow_html=True,
                 )
@@ -2075,7 +2060,6 @@ with col_preview:
             """, unsafe_allow_html=True)
 
         else:
-            # ---- Painel "o que a IA esta fazendo" (estilo Arena) ----
             if st.session_state.current_thinking or is_multi_file:
                 with st.expander("Raciocinio da IA", expanded=False):
                     if st.session_state.current_thinking:
@@ -2085,7 +2069,6 @@ with col_preview:
                         st.markdown(f"**Arquivos gerados:** {_names}")
 
             if st.session_state.preview_view == "code":
-                # ---- Modo Codigo: arvore de arquivos + visualizador ----
                 file_names = list(files_dict.keys())
                 if (
                     st.session_state.selected_file not in file_names
