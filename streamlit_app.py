@@ -2020,8 +2020,8 @@ with col_chat:
 with col_preview:
 
     has_art = bool(st.session_state.current_artifact)
-    total_v = len(st.session_state.artifact_versions)
-    cur_v   = st.session_state.artifact_version_idx + 1 if total_v else 0
+    total_v = len(st.session_state.get("artifact_versions", []))
+    cur_v   = st.session_state.get("artifact_version_idx", -1) + 1 if total_v else 0
     files_dict = st.session_state.current_files or {}
     is_multi_file = len(files_dict) > 1
 
