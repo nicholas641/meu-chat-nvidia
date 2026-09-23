@@ -137,6 +137,7 @@ _DEFAULTS = {
     "editing_idx":          None,  # indice de mensagem sendo editada
     "stop_requested":       False,
     "search_query":         "",
+    "refresh_counter":      0,   # FIX: contador para forcar re-render real do iframe
 }
 for k, v in _DEFAULTS.items():
     if k not in st.session_state:
@@ -162,9 +163,11 @@ if _action:
         st.toast("Nova conversa iniciada", icon=":material/check_circle:")
 
     elif _action == "refresh":
-        _cur = st.session_state.current_artifact
-        st.session_state.current_artifact = None
-        st.session_state.current_artifact = _cur
+        # FIX: o truque antigo (None -> mesmo valor) nao mudava o hash do
+        # conteudo, entao o iframe as vezes nao era realmente remontado
+        # pelo navegador (ex: JS/animacoes/timers nao reiniciavam).
+        # Agora incrementamos um contador que e injetado no HTML renderizado.
+        st.session_state.refresh_counter += 1
         st.toast("Preview atualizado", icon=":material/refresh:")
 
     elif _action == "example":
@@ -229,6 +232,9 @@ if _action:
             v = st.session_state.artifact_versions[i]
             st.session_state.current_artifact = v["code"]
             st.session_state.artifact_lang = v["lang"]
+            # FIX: sair do modo edicao ao trocar de versao — evita mostrar
+            # o textarea de uma versao antiga por cima do codigo novo
+            st.session_state.artifact_edit_mode = False
 
     elif _action == "artifact_next":
         if st.session_state.artifact_versions:
@@ -239,6 +245,7 @@ if _action:
             v = st.session_state.artifact_versions[i]
             st.session_state.current_artifact = v["code"]
             st.session_state.artifact_lang = v["lang"]
+            st.session_state.artifact_edit_mode = False  # FIX (ver acima)
 
     # ---- Modo edicao do artifact ----
     elif _action == "toggle_artifact_edit":
@@ -1636,6 +1643,12 @@ with col_preview:
 
         elif st.session_state.artifact_edit_mode:
             # Modo edicao: substitui o iframe por um textarea
+            # FIX: a key agora inclui o indice da versao. Antes a key era
+            # fixa ("artifact_edit_area"), entao o Streamlit ignorava o
+            # `value=` em reruns seguintes e o textarea ficava preso no
+            # conteudo da primeira vez que essa key foi usada — trocar de
+            # versao e clicar em editar mostrava o codigo errado.
+            _edit_key = f"artifact_edit_area_{st.session_state.artifact_version_idx}"
             with st.form("artifact_edit_form", clear_on_submit=False):
                 st.markdown(
                     '<div style="font-size:11px;font-weight:600;'
@@ -1650,7 +1663,7 @@ with col_preview:
                     value=st.session_state.current_artifact,
                     height=IFRAME_HEIGHT - 110,
                     label_visibility="collapsed",
-                    key="artifact_edit_area",
+                    key=_edit_key,
                 )
                 ec1, ec2 = st.columns([1.4, 1])
                 with ec1:
@@ -1678,8 +1691,17 @@ with col_preview:
                     st.rerun()
 
         else:
+            # FIX: injeta um comentario HTML invisivel com o contador de
+            # refresh + indice de versao. Antes o botao "Atualizar" so
+            # reatribuia a mesma string ao session_state, entao o hash do
+            # conteudo nao mudava e o navegador podia manter o iframe
+            # antigo (JS, timers e estado interno do artifact nao reiniciavam).
+            _cache_bust = (
+                f"\n<!-- aether-preview-refresh:{st.session_state.refresh_counter}"
+                f"-v{st.session_state.artifact_version_idx} -->"
+            )
             components.html(
-                st.session_state.current_artifact,
+                st.session_state.current_artifact + _cache_bust,
                 height=IFRAME_HEIGHT,
                 scrolling=True,
             )
