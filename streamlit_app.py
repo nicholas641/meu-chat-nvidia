@@ -2,11 +2,13 @@
 Aether Engine — AI workspace
 -----------------------------
 Layout: sidebar nativa + header + 2 colunas (chat | preview).
-Botao de download do artifact no header do preview.
+Chat com historico/projetos/configuracoes funcionais.
+Preview com file tree + raciocinio da IA (estilo "Arena").
 """
 
 import os
 import re
+import uuid
 import urllib.parse
 from datetime import datetime
 
@@ -80,23 +82,50 @@ ICON_EDIT    = _svg('<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 
 ICON_STOP    = _svg('<rect x="6" y="6" width="12" height="12" rx="2"/>', 14)
 ICON_BACK    = _svg('<path d="M15 18l-6-6 6-6"/>', 14)
 ICON_NEXT    = _svg('<path d="M9 18l6-6-6-6"/>', 14)
+ICON_EYE     = _svg('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>', 15)
+ICON_CODE    = _svg('<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>', 15)
+ICON_STAR    = _svg('<polygon points="12 2 15 9 22 9.3 16.5 14 18.5 21 12 17 5.5 21 7.5 14 2 9.3 9 9"/>', 14)
+ICON_ARROWL  = _svg('<path d="M19 12H5M12 19l-7-7 7-7"/>', 15)
 
 
 # ============================================================
-# SYSTEM PROMPT
+# SYSTEM PROMPT (base + personalizacao definida pelo usuario)
 # ============================================================
-SYSTEM_PROMPT = """You are Aether Engine, a professional technical assistant.
+BASE_SYSTEM_PROMPT = """You are Aether Engine, a professional technical assistant.
 
 Strict rules:
-1. Never use emojis or emoticons in your responses.
-2. Be concise, technical, and direct.
-3. Respond in the same language the user writes in.
-4. When the user requests a UI component, visual, animation, or HTML/CSS/JS/SVG
+1. Be concise and direct.
+2. Respond in the same language the user writes in.
+3. When the user requests a UI component, visual, animation, or HTML/CSS/JS
    output, wrap the complete code inside <artifact>...</artifact> tags.
-   The content must be a full standalone HTML document (with <!DOCTYPE html>).
-5. Do not add commentary about the artifact outside the tags beyond a one-line
-   summary.
+4. Inside <artifact>, either:
+   a) write one full standalone HTML document (with <!DOCTYPE html>), or
+   b) split it into multiple files using this format, when it makes sense
+      for the request (e.g. a small app with separate structure):
+      <file name="index.html">...</file>
+      <file name="style.css">...</file>
+      <file name="script.js">...</file>
+      One of the files must be named index.html and must be a full HTML
+      document (it can reference the css/js conceptually; they will be
+      inlined automatically for preview).
+5. Before or while producing the artifact, briefly narrate what you are
+   doing in plain text outside the tags (e.g. "Lendo o pedido, vou criar
+   index.html e style.css...") so the user can follow your reasoning.
+6. Do not add commentary about the artifact outside the tags beyond a
+   short summary.
 """
+
+
+def build_system_prompt() -> str:
+    prompt = BASE_SYSTEM_PROMPT
+    custom = (st.session_state.get("custom_instructions") or "").strip()
+    if custom:
+        prompt += (
+            "\n\nUser personalization instructions (ALWAYS follow these, "
+            "they override the default tone/style, even rule 1 about being "
+            "purely technical if they conflict):\n" + custom
+        )
+    return prompt
 
 
 # ============================================================
@@ -124,10 +153,14 @@ st.set_page_config(
 _DEFAULTS = {
     "messages":             [],
     "current_artifact":     None,
+    "current_files":        {},   # dict {nome_arquivo: conteudo} da versao atual
+    "current_thinking":     "",   # raciocinio associado a versao atual do artifact
     "artifact_lang":        None,
-    "artifact_versions":    [],   # lista de dicts {code, lang, ts, prompt}
+    "artifact_versions":    [],   # lista de dicts {code, files, lang, ts, prompt, thinking}
     "artifact_version_idx": -1,
     "artifact_edit_mode":   False,
+    "preview_view":         "preview",  # "preview" ou "code"
+    "selected_file":        None,
     "pending_prompt":       None,
     "temperature":          1.0,
     "top_p":                0.95,
@@ -137,11 +170,81 @@ _DEFAULTS = {
     "editing_idx":          None,  # indice de mensagem sendo editada
     "stop_requested":       False,
     "search_query":         "",
-    "refresh_counter":      0,   # FIX: contador para forcar re-render real do iframe
+    "refresh_counter":      0,
+    "custom_instructions":  "",   # personalizacao/memoria definida pelo usuario
+    "conversations":        [],   # historico/projetos salvos
+    "show_history":         False,
+    "show_projects":        False,
+    "show_settings":        False,
 }
 for k, v in _DEFAULTS.items():
     if k not in st.session_state:
         st.session_state[k] = v
+
+
+# ============================================================
+# HELPERS DE CONVERSA (usados pelo router)
+# ============================================================
+def _reset_conversation():
+    st.session_state.messages = []
+    st.session_state.current_artifact = None
+    st.session_state.current_files = {}
+    st.session_state.current_thinking = ""
+    st.session_state.artifact_lang = None
+    st.session_state.artifact_versions = []
+    st.session_state.artifact_version_idx = -1
+    st.session_state.artifact_edit_mode = False
+    st.session_state.preview_view = "preview"
+    st.session_state.selected_file = None
+    st.session_state.editing_idx = None
+
+
+def _close_panels():
+    st.session_state.show_history = False
+    st.session_state.show_projects = False
+    st.session_state.show_settings = False
+
+
+def _snapshot_conversation(pinned: bool = False, title: str = None):
+    """Salva a conversa atual (se tiver mensagens) na lista de conversas."""
+    if not st.session_state.messages:
+        return
+    if title is None:
+        first_user = next(
+            (m["content"] for m in st.session_state.messages if m["role"] == "user"),
+            "Conversa",
+        )
+        title = (first_user or "Conversa").strip().splitlines()[0][:42]
+    st.session_state.conversations.insert(0, {
+        "id":                   str(uuid.uuid4())[:8],
+        "title":                title or "Conversa sem titulo",
+        "ts":                   datetime.now().strftime("%d/%m %H:%M"),
+        "messages":             st.session_state.messages,
+        "artifact_versions":    st.session_state.artifact_versions,
+        "artifact_version_idx": st.session_state.artifact_version_idx,
+        "current_artifact":     st.session_state.current_artifact,
+        "current_files":        st.session_state.current_files,
+        "current_thinking":     st.session_state.current_thinking,
+        "artifact_lang":        st.session_state.artifact_lang,
+        "pinned":               pinned,
+    })
+
+
+def _load_conversation(conv_id: str) -> bool:
+    for c in st.session_state.conversations:
+        if c["id"] == conv_id:
+            st.session_state.messages             = c["messages"]
+            st.session_state.artifact_versions     = c["artifact_versions"]
+            st.session_state.artifact_version_idx  = c["artifact_version_idx"]
+            st.session_state.current_artifact      = c["current_artifact"]
+            st.session_state.current_files         = c.get("current_files", {})
+            st.session_state.current_thinking      = c.get("current_thinking", "")
+            st.session_state.artifact_lang         = c["artifact_lang"]
+            st.session_state.artifact_edit_mode    = False
+            st.session_state.preview_view          = "preview"
+            st.session_state.editing_idx           = None
+            return True
+    return False
 
 
 # ============================================================
@@ -153,20 +256,14 @@ if _action:
     st.query_params.clear()
 
     if _action == "new":
-        st.session_state.messages = []
-        st.session_state.current_artifact = None
-        st.session_state.artifact_lang = None
-        st.session_state.artifact_versions = []
-        st.session_state.artifact_version_idx = -1
-        st.session_state.artifact_edit_mode = False
-        st.session_state.editing_idx = None
+        _snapshot_conversation(pinned=False)
+        _reset_conversation()
+        _close_panels()
         st.toast("Nova conversa iniciada", icon=":material/check_circle:")
 
     elif _action == "refresh":
-        # FIX: o truque antigo (None -> mesmo valor) nao mudava o hash do
-        # conteudo, entao o iframe as vezes nao era realmente remontado
-        # pelo navegador (ex: JS/animacoes/timers nao reiniciavam).
-        # Agora incrementamos um contador que e injetado no HTML renderizado.
+        # Contador injetado no HTML do preview para forcar o navegador a
+        # remontar o iframe de verdade (JS/timers/estado reiniciam).
         st.session_state.refresh_counter += 1
         st.toast("Preview atualizado", icon=":material/refresh:")
 
@@ -184,8 +281,40 @@ if _action:
             icon=":material/mic_off:",
         )
 
-    elif _action in ("projects", "history", "settings"):
-        st.toast("Modulo em desenvolvimento.", icon=":material/construction:")
+    elif _action == "projects":
+        st.session_state.show_projects = not st.session_state.show_projects
+        st.session_state.show_history = False
+        st.session_state.show_settings = False
+
+    elif _action == "history":
+        st.session_state.show_history = not st.session_state.show_history
+        st.session_state.show_projects = False
+        st.session_state.show_settings = False
+
+    elif _action == "settings":
+        st.session_state.show_settings = not st.session_state.show_settings
+        st.session_state.show_history = False
+        st.session_state.show_projects = False
+
+    elif _action == "close_panel":
+        _close_panels()
+
+    elif _action == "load_conv" and _idx_qp is not None:
+        _loaded = _load_conversation(_idx_qp)
+        _close_panels()
+        if _loaded:
+            st.toast("Conversa carregada", icon=":material/history:")
+
+    elif _action == "toggle_pin_conv" and _idx_qp is not None:
+        for c in st.session_state.conversations:
+            if c["id"] == _idx_qp:
+                c["pinned"] = not c["pinned"]
+                break
+
+    elif _action == "delete_conv" and _idx_qp is not None:
+        st.session_state.conversations = [
+            c for c in st.session_state.conversations if c["id"] != _idx_qp
+        ]
 
     elif _action == "clear_attach":
         st.session_state.attached_name = None
@@ -193,11 +322,8 @@ if _action:
         st.toast("Anexo removido", icon=":material/delete:")
 
     elif _action == "clear_chat":
-        st.session_state.messages = []
-        st.session_state.current_artifact = None
-        st.session_state.artifact_versions = []
-        st.session_state.artifact_version_idx = -1
-        st.session_state.editing_idx = None
+        _reset_conversation()
+        _close_panels()
         st.rerun()
 
     # ---- Edicao de mensagem ----
@@ -213,10 +339,8 @@ if _action:
     # ---- Regenerar ----
     elif _action == "regen":
         msgs = st.session_state.messages
-        # remove ultima resposta do assistente
         if msgs and msgs[-1]["role"] == "assistant":
             msgs.pop()
-        # a ultima deve ser um prompt do usuario — reenvia
         if msgs and msgs[-1]["role"] == "user":
             last_user = msgs.pop()
             st.session_state.pending_prompt = last_user["content"]
@@ -228,24 +352,28 @@ if _action:
             i = st.session_state.artifact_version_idx - 1
             if i < 0:
                 i = len(st.session_state.artifact_versions) - 1
-            st.session_state.artifact_version_idx = i
             v = st.session_state.artifact_versions[i]
+            st.session_state.artifact_version_idx = i
             st.session_state.current_artifact = v["code"]
+            st.session_state.current_files = v.get("files", {"index.html": v["code"]})
+            st.session_state.current_thinking = v.get("thinking", "")
             st.session_state.artifact_lang = v["lang"]
-            # FIX: sair do modo edicao ao trocar de versao — evita mostrar
-            # o textarea de uma versao antiga por cima do codigo novo
             st.session_state.artifact_edit_mode = False
+            st.session_state.selected_file = None
 
     elif _action == "artifact_next":
         if st.session_state.artifact_versions:
             i = (st.session_state.artifact_version_idx + 1) % len(
                 st.session_state.artifact_versions
             )
-            st.session_state.artifact_version_idx = i
             v = st.session_state.artifact_versions[i]
+            st.session_state.artifact_version_idx = i
             st.session_state.current_artifact = v["code"]
+            st.session_state.current_files = v.get("files", {"index.html": v["code"]})
+            st.session_state.current_thinking = v.get("thinking", "")
             st.session_state.artifact_lang = v["lang"]
-            st.session_state.artifact_edit_mode = False  # FIX (ver acima)
+            st.session_state.artifact_edit_mode = False
+            st.session_state.selected_file = None
 
     # ---- Modo edicao do artifact ----
     elif _action == "toggle_artifact_edit":
@@ -254,35 +382,22 @@ if _action:
     elif _action == "cancel_artifact_edit":
         st.session_state.artifact_edit_mode = False
 
+    # ---- Alternar visualizacao do preview ----
+    elif _action == "view_preview":
+        st.session_state.preview_view = "preview"
+
+    elif _action == "view_code":
+        st.session_state.preview_view = "code"
+
 
 # ============================================================
-# HELPERS
+# HELPERS DE TEXTO / PARSING
 # ============================================================
-_EMOJI_RE = re.compile(
-    "["
-    "\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF"
-    "\U0001F1E0-\U0001F1FF\U00002700-\U000027BF\U0001F900-\U0001F9FF"
-    "\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF\U00002600-\U000026FF"
-    "\U0001F700-\U0001F77F\U0000FE00-\U0000FE0F\U00002B00-\U00002BFF"
-    "\U00002190-\U000021FF"
-    "]+",
-    flags=re.UNICODE,
-)
-
-
-def strip_emojis(text: str) -> str:
-    if not text:
-        return text
-    cleaned = _EMOJI_RE.sub("", text)
-    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
-    cleaned = re.sub(r" +\n", "\n", cleaned)
-    return cleaned
-
-
 _THINK_RE    = re.compile(r"<thinking>(.*?)</thinking>", re.DOTALL | re.IGNORECASE)
 _ARTIFACT_RE = re.compile(r"<artifact[^>]*>(.*?)</artifact>", re.DOTALL | re.IGNORECASE)
 _HTML_BLOCK  = re.compile(r"```html\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
 _SVG_BLOCK   = re.compile(r"```svg\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
+_FILE_RE     = re.compile(r'<file\s+(?:name|path)=["\']([^"\']+)["\']\s*>(.*?)</file>', re.DOTALL | re.IGNORECASE)
 _DANGLING_RE = re.compile(r"<(thinking|artifact)\b[^>]*>(?![^<]*</\1>)", re.IGNORECASE)
 
 
@@ -297,7 +412,6 @@ def extract_thinking(text: str):
 
 
 def _detect_lang(code: str) -> str:
-    """Detecta a linguagem do artifact: 'svg' ou 'html'."""
     if not code:
         return "html"
     lowered = code.lower()
@@ -307,6 +421,7 @@ def _detect_lang(code: str) -> str:
 
 
 def extract_artifact(text: str):
+    """Retorna (texto_visivel, codigo_bruto_do_artifact, lang)."""
     m = _ARTIFACT_RE.search(text)
     if m:
         code = m.group(1).strip()
@@ -332,14 +447,83 @@ def extract_artifact(text: str):
     return text.strip(), None, None
 
 
+def _parse_files(artifact_raw: str) -> dict:
+    """Extrai multiplos arquivos de dentro do artifact (blocos <file>).
+    Se nao houver nenhum, trata o conteudo inteiro como index.html."""
+    files = {}
+    for m in _FILE_RE.finditer(artifact_raw or ""):
+        fname = m.group(1).strip()
+        fcontent = m.group(2).strip()
+        if fname:
+            files[fname] = fcontent
+    if not files:
+        files["index.html"] = artifact_raw or ""
+    return files
+
+
+def _build_preview_html(files: dict) -> str:
+    """Combina os arquivos (html/css/js) em um unico documento renderizavel."""
+    html = files.get("index.html") or next(iter(files.values()), "")
+
+    css_parts = [
+        c for n, c in files.items()
+        if n != "index.html" and n.lower().endswith(".css")
+    ]
+    js_parts = [
+        c for n, c in files.items()
+        if n != "index.html" and n.lower().endswith((".js", ".jsx"))
+    ]
+
+    if css_parts:
+        style_tag = "<style>\n" + "\n".join(css_parts) + "\n</style>"
+        html = (
+            html.replace("</head>", style_tag + "\n</head>", 1)
+            if "</head>" in html else style_tag + html
+        )
+
+    if js_parts:
+        script_tag = "<script>\n" + "\n".join(js_parts) + "\n</script>"
+        html = (
+            html.replace("</body>", script_tag + "\n</body>", 1)
+            if "</body>" in html else html + script_tag
+        )
+
+    return html
+
+
+def _maybe_strip_emojis(text: str) -> str:
+    """So remove emojis no modo padrao; se ha personalizacao definida
+    pelo usuario (ex: 'sempre responda na zueira'), deixa o texto como
+    o modelo escreveu, ja que emojis costumam fazer parte desse tom."""
+    if (st.session_state.get("custom_instructions") or "").strip():
+        return text or ""
+    if not text:
+        return text
+    cleaned = re.sub(
+        "["
+        "\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF"
+        "\U0001F1E0-\U0001F1FF\U00002700-\U000027BF\U0001F900-\U0001F9FF"
+        "\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF\U00002600-\U000026FF"
+        "\U0001F700-\U0001F77F\U0000FE00-\U0000FE0F\U00002B00-\U00002BFF"
+        "\U00002190-\U000021FF"
+        "]+",
+        "",
+        text,
+        flags=re.UNICODE,
+    )
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r" +\n", "\n", cleaned)
+    return cleaned
+
+
 def parse_response(raw: str) -> dict:
-    no_artifact, artifact, lang = extract_artifact(raw)
+    no_artifact, artifact_raw, lang = extract_artifact(raw)
     visible, thinking = extract_thinking(no_artifact)
     return {
-        "text":     strip_emojis(visible),
-        "thinking": thinking,
-        "artifact": artifact,
-        "lang":     lang,
+        "text":         _maybe_strip_emojis(visible),
+        "thinking":     thinking,
+        "artifact_raw": artifact_raw,
+        "lang":         lang,
     }
 
 
@@ -436,6 +620,23 @@ st.markdown("""
         max-width: 100% !important;
     }
 
+    /* ---------- FIX: texto do chat aparecendo branco ----------
+       O streaming escreve via st.empty().markdown(...) e, dependendo do
+       tema do navegador/SO, o Streamlit podia herdar cor de texto clara
+       (branco) por baixo dos seletores mais especificos abaixo. Forcamos
+       a cor em QUALQUER markdown renderizado no app, nao so no chat. */
+    .stMarkdown, .stMarkdown p, .stMarkdown li, .stMarkdown span,
+    .stMarkdown div, .stMarkdown strong, .stMarkdown em, .stMarkdown a,
+    .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown h4,
+    [data-testid="stMarkdownContainer"],
+    [data-testid="stMarkdownContainer"] * {
+        color: var(--text) !important;
+    }
+    .stMarkdown code, [data-testid="stMarkdownContainer"] code {
+        color: var(--text) !important;
+        background: var(--bg-code) !important;
+    }
+
     /* ---------- ALTURA FIXA DOS PAINEIS (610px) ---------- */
     [data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="stVerticalBlock"]),
     [data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stVerticalBlock"]) {
@@ -521,6 +722,7 @@ st.markdown("""
     .sb-btn svg { flex-shrink: 0; opacity: 0.75; }
     .sb-btn:hover svg { opacity: 1; }
     .sb-btn span { color: inherit; }
+    .sb-btn.active { background: var(--panel); color: var(--accent) !important; }
 
     .sb-btn-primary {
         background: var(--accent);
@@ -608,6 +810,7 @@ st.markdown("""
         transition: background-color 0.15s ease, color 0.15s ease;
     }
     .panel-tool:hover { background: var(--panel); color: var(--accent) !important; }
+    .panel-tool.active { background: var(--panel); color: var(--accent) !important; }
 
     .version-nav {
         display: inline-flex; align-items: center; gap: 2px;
@@ -767,14 +970,18 @@ st.markdown("""
     }
 
     /* ---- Form inline de edicao ---- */
-    [data-testid="stChatMessage"] [data-testid="stForm"] {
+    [data-testid="stForm"] {
         background: var(--card) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: var(--radius-lg) !important;
+        padding: 10px 12px !important;
+    }
+    [data-testid="stChatMessage"] [data-testid="stForm"] {
         border: 1px solid var(--accent) !important;
-        border-radius: var(--radius-md) !important;
         padding: 8px 10px !important;
         margin-top: 6px !important;
     }
-    [data-testid="stChatMessage"] [data-testid="stTextArea"] textarea {
+    [data-testid="stTextArea"] textarea {
         font-size: 14px !important;
         line-height: 1.55 !important;
         border: 1px solid var(--border) !important;
@@ -784,13 +991,15 @@ st.markdown("""
     }
 
     [data-testid="stChatMessage"] [data-testid="stCode"],
-    [data-testid="stChatMessage"] pre {
+    [data-testid="stChatMessage"] pre,
+    .stCodeBlock pre {
         background: var(--bg-code) !important;
         border: 1px solid var(--border) !important;
         border-radius: var(--radius-sm) !important;
     }
     [data-testid="stChatMessage"] pre code,
-    [data-testid="stChatMessage"] [data-testid="stCode"] code {
+    [data-testid="stChatMessage"] [data-testid="stCode"] code,
+    .stCodeBlock code {
         background: transparent !important;
         color: var(--text) !important;
         font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace !important;
@@ -806,6 +1015,12 @@ st.markdown("""
         font-size: 12.5px !important;
     }
 
+    [data-testid="stExpander"] {
+        border: 1px solid var(--border-soft) !important;
+        background: var(--panel) !important;
+        border-radius: var(--radius-sm) !important;
+        margin: 0 0 8px 0 !important;
+    }
     [data-testid="stChatMessage"] [data-testid="stExpander"] {
         border: none !important; background: transparent !important;
         margin: 0 0 8px 0 !important; padding: 0 !important;
@@ -813,13 +1028,17 @@ st.markdown("""
     [data-testid="stChatMessage"] [data-testid="stExpander"] details {
         border: none !important; background: transparent !important; padding: 0 !important;
     }
-    [data-testid="stChatMessage"] [data-testid="stExpander"] summary {
-        padding: 2px 0 !important;
+    [data-testid="stExpander"] summary {
+        padding: 6px 10px !important;
         font-size: 12px !important;
-        color: var(--text-mute) !important;
+        color: var(--text-dim) !important;
         font-weight: 500 !important;
         background: transparent !important;
         border: none !important;
+    }
+    [data-testid="stChatMessage"] [data-testid="stExpander"] summary {
+        padding: 2px 0 !important;
+        color: var(--text-mute) !important;
         list-style: none !important;
         opacity: 0.8;
         transition: opacity 0.15s ease, color 0.15s ease;
@@ -834,11 +1053,14 @@ st.markdown("""
         width: 10px !important; height: 10px !important;
         opacity: 0.6; margin-right: 6px;
     }
+    [data-testid="stExpanderDetails"] {
+        padding: 6px 10px 10px 10px !important;
+        background: transparent !important;
+    }
     [data-testid="stChatMessage"] [data-testid="stExpanderDetails"] {
         border-left: 2px solid var(--border-soft) !important;
         padding: 6px 0 6px 14px !important;
         margin: 6px 0 10px 0 !important;
-        background: transparent !important;
     }
     [data-testid="stChatMessage"] [data-testid="stExpanderDetails"] p {
         font-size: 12.5px !important;
@@ -846,23 +1068,41 @@ st.markdown("""
         line-height: 1.65; font-style: italic; opacity: 0.9;
     }
 
-    /* ---------- COMPOSER ---------- */
-    [data-testid="stForm"] {
+    /* ---------- FORMS (config / editar / salvar projeto) ----------
+       Estilo padrao para botoes de submit de formularios que NAO sao o
+       composer (o composer e diferenciado abaixo via :has() no proprio
+       input, ja que um <div> criado com st.markdown nao consegue
+       "envolver" outros elementos do Streamlit no DOM). */
+    [data-testid="stFormSubmitButton"] button {
         background: var(--card) !important;
+        color: var(--text-dim) !important;
         border: 1px solid var(--border) !important;
-        border-radius: var(--radius-lg) !important;
-        padding: 6px 10px !important;
+        border-radius: var(--radius-sm) !important;
+        font-weight: 500 !important;
+        font-size: 13px !important;
+        box-shadow: none !important;
+    }
+    [data-testid="stFormSubmitButton"] button:hover {
+        border-color: var(--accent) !important;
+        color: var(--accent) !important;
+        background: rgba(201,100,66,.03) !important;
+    }
+    [data-testid="stFormSubmitButton"] button p { color: inherit !important; margin: 0 !important; }
+
+    /* ---------- COMPOSER (identificado pelo placeholder do input) ---------- */
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) {
         box-shadow: 0 2px 8px rgba(0,0,0,.04);
         margin-top: 4px;
+        padding: 6px 10px !important;
     }
     [data-testid="stForm"] > div > [data-testid="stVerticalBlock"] { gap: 0 !important; }
     [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
         align-items: center !important; gap: 6px !important;
     }
-    [data-testid="stForm"] [data-testid="stTextInput"] > div {
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stTextInput"] > div {
         border: none !important; background: transparent !important; box-shadow: none !important;
     }
-    [data-testid="stForm"] [data-testid="stTextInput"] input {
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stTextInput"] input {
         background: transparent !important;
         border: none !important;
         color: var(--text) !important;
@@ -873,13 +1113,13 @@ st.markdown("""
         height: 44px !important;
         box-shadow: none !important;
     }
-    [data-testid="stForm"] [data-testid="stTextInput"] input::placeholder {
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stTextInput"] input::placeholder {
         color: var(--text-mute) !important;
         -webkit-text-fill-color: var(--text-mute) !important;
         opacity: 1 !important;
     }
 
-    [data-testid="stForm"] [data-testid="stPopover"] > button {
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stPopover"] > button {
         width: 40px !important; height: 40px !important; min-width: 40px !important;
         padding: 0 !important; font-size: 0 !important; color: transparent !important;
         background-color: transparent !important;
@@ -891,12 +1131,12 @@ st.markdown("""
         background-position: center !important;
         transition: border-color 0.15s ease, background-color 0.15s ease !important;
     }
-    [data-testid="stForm"] [data-testid="stPopover"] > button:hover {
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stPopover"] > button:hover {
         background-color: var(--panel) !important;
         border-color: var(--accent) !important;
     }
 
-    [data-testid="stForm"] [data-testid="stFormSubmitButton"] button {
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stFormSubmitButton"] button {
         background: var(--accent) !important;
         color: #ffffff !important;
         border: none !important;
@@ -909,7 +1149,7 @@ st.markdown("""
         background-repeat: no-repeat !important;
         background-position: center !important;
     }
-    [data-testid="stForm"] [data-testid="stFormSubmitButton"] button:hover {
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stFormSubmitButton"] button:hover {
         background-color: var(--accent-hover) !important;
         transform: translateY(-1px);
     }
@@ -1032,6 +1272,58 @@ st.markdown("""
         opacity: 0.7;
     }
     @keyframes blink { 50% { opacity: 0; } }
+
+    /* file tree do modo "codigo" */
+    .file-row {
+        display: flex; align-items: center; gap: 8px;
+        padding: 7px 10px; border-radius: var(--radius-sm);
+        font-size: 12.5px; color: var(--text-dim) !important;
+        cursor: pointer; margin-bottom: 2px;
+    }
+    .file-row.active { background: var(--panel); color: var(--accent) !important; font-weight: 600; }
+
+    /* ---------- LISTAS (historico / projetos) ---------- */
+    .hist-row {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 10px 6px; border-bottom: 1px solid var(--border-soft);
+        gap: 8px;
+    }
+    .hist-row-main { flex: 1 1 auto; min-width: 0; text-decoration: none !important; }
+    .hist-title {
+        font-size: 13.5px; font-weight: 500; color: var(--text) !important;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .hist-meta { font-size: 11px; color: var(--text-mute) !important; margin-top: 2px; }
+    .hist-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+    .hist-action {
+        color: var(--text-mute) !important; text-decoration: none !important;
+        display: inline-flex; align-items: center; cursor: pointer;
+        transition: color 0.15s ease;
+    }
+    .hist-action:hover { color: var(--accent) !important; }
+    .hist-action.pinned { color: var(--accent) !important; }
+    .panel-empty {
+        padding: 30px 10px; text-align: center;
+        color: var(--text-mute); font-size: 13px; line-height: 1.6;
+    }
+    .panel-back {
+        display: inline-flex; align-items: center; gap: 6px;
+        font-size: 12.5px; font-weight: 500;
+        color: var(--text-dim) !important;
+        text-decoration: none !important;
+        margin-bottom: 8px;
+        transition: color 0.15s ease;
+    }
+    .panel-back:hover { color: var(--accent) !important; }
+    .settings-hint {
+        font-size: 12px; color: var(--text-mute) !important;
+        line-height: 1.6; margin-bottom: 10px;
+    }
+    .settings-section {
+        font-size: 11px; font-weight: 600; color: var(--text-mute);
+        letter-spacing: 0.08em; text-transform: uppercase;
+        margin: 16px 0 8px 0;
+    }
 
     /* ---------- GENERIC BUTTONS ---------- */
     .stButton > button {
@@ -1188,6 +1480,10 @@ components.html(
 # ============================================================
 # SIDEBAR
 # ============================================================
+_cls_proj = "sb-btn active" if st.session_state.show_projects else "sb-btn"
+_cls_hist = "sb-btn active" if st.session_state.show_history else "sb-btn"
+_cls_conf = "sb-btn active" if st.session_state.show_settings else "sb-btn"
+
 with st.sidebar:
     st.markdown(f"""
     <div class="sb-brand">
@@ -1203,15 +1499,15 @@ with st.sidebar:
     </a>
 
     <div class="sb-section">Espaco</div>
-    <a class="sb-btn" href="?a=projects" target="_self">
+    <a class="{_cls_proj}" href="?a=projects" target="_self">
         {ICON_FOLDER}<span>Projetos</span>
     </a>
-    <a class="sb-btn" href="?a=history" target="_self">
+    <a class="{_cls_hist}" href="?a=history" target="_self">
         {ICON_HISTORY}<span>Historico</span>
     </a>
 
     <div class="sb-section">Sistema</div>
-    <a class="sb-btn" href="?a=settings" target="_self">
+    <a class="{_cls_conf}" href="?a=settings" target="_self">
         {ICON_GEAR}<span>Configuracoes</span>
     </a>
     <a class="sb-btn" href="?a=clear_chat" target="_self">
@@ -1250,6 +1546,139 @@ st.markdown("""
 
 
 # ============================================================
+# PAINEIS: HISTORICO / PROJETOS / CONFIGURACOES
+# (renderizados dentro da coluna do chat, no lugar da conversa)
+# ============================================================
+def _hist_row_html(c: dict, show_pin: bool = True) -> str:
+    pin_cls = "hist-action pinned" if c["pinned"] else "hist-action"
+    pin_title = "Remover dos projetos" if c["pinned"] else "Salvar como projeto"
+    pin_html = (
+        f'<a class="{pin_cls}" href="?a=toggle_pin_conv&i={c["id"]}" '
+        f'target="_self" title="{pin_title}">{ICON_STAR}</a>'
+        if show_pin else ""
+    )
+    return f"""
+    <div class="hist-row">
+        <a class="hist-row-main" href="?a=load_conv&i={c['id']}" target="_self">
+            <div class="hist-title">{c['title']}</div>
+            <div class="hist-meta">{c['ts']} · {len(c['messages'])} mensagens</div>
+        </a>
+        <div class="hist-actions">
+            {pin_html}
+            <a class="hist-action" href="?a=delete_conv&i={c['id']}" target="_self" title="Excluir">{ICON_TRASH}</a>
+        </div>
+    </div>
+    """
+
+
+def _render_settings_panel():
+    st.markdown(
+        f'<a class="panel-back" href="?a=close_panel" target="_self">'
+        f'{ICON_ARROWL}<span>Voltar para a conversa</span></a>',
+        unsafe_allow_html=True,
+    )
+    box = st.container(height=PANEL_HEIGHT)
+    with box:
+        st.markdown(
+            '<div style="font-size:14px;font-weight:600;margin-bottom:4px;">'
+            'Personalizacao</div>'
+            '<div class="settings-hint">'
+            'Escreva como voce quer que o Aether responda (tom, girias, '
+            'regras fixas). Isso e enviado junto de toda mensagem, como '
+            'uma memoria persistente da conversa.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        with st.form("settings_form", clear_on_submit=False):
+            custom = st.text_area(
+                "Personalizacao",
+                value=st.session_state.custom_instructions,
+                placeholder="Ex: sempre responda na zueira, com girias brasileiras, "
+                            "sem formalidade, pode usar emoji...",
+                height=140,
+                label_visibility="collapsed",
+            )
+            st.markdown(
+                '<div class="settings-section">Geracao</div>',
+                unsafe_allow_html=True,
+            )
+            temp = st.slider(
+                "Criatividade (temperature)",
+                0.0, 2.0, float(st.session_state.temperature), 0.05,
+            )
+            topp = st.slider(
+                "Top P", 0.0, 1.0, float(st.session_state.top_p), 0.05,
+            )
+            saved = st.form_submit_button(
+                "Salvar configuracoes", use_container_width=True,
+            )
+            if saved:
+                st.session_state.custom_instructions = custom.strip()
+                st.session_state.temperature = temp
+                st.session_state.top_p = topp
+                st.toast("Configuracoes salvas", icon=":material/check_circle:")
+
+
+def _render_history_panel():
+    st.markdown(
+        f'<a class="panel-back" href="?a=close_panel" target="_self">'
+        f'{ICON_ARROWL}<span>Voltar para a conversa</span></a>',
+        unsafe_allow_html=True,
+    )
+    box = st.container(height=PANEL_HEIGHT)
+    with box:
+        if not st.session_state.conversations:
+            st.markdown(
+                '<div class="panel-empty">Nenhuma conversa salva ainda.<br>'
+                'Conversas anteriores aparecem aqui quando voce clica em '
+                '"Novo projeto".</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            for c in st.session_state.conversations:
+                st.markdown(_hist_row_html(c), unsafe_allow_html=True)
+
+
+def _render_projects_panel():
+    st.markdown(
+        f'<a class="panel-back" href="?a=close_panel" target="_self">'
+        f'{ICON_ARROWL}<span>Voltar para a conversa</span></a>',
+        unsafe_allow_html=True,
+    )
+    box = st.container(height=PANEL_HEIGHT)
+    with box:
+        if st.session_state.messages:
+            default_title = next(
+                (m["content"] for m in st.session_state.messages if m["role"] == "user"),
+                "Meu projeto",
+            )
+            with st.form("save_project_form", clear_on_submit=True):
+                name = st.text_input(
+                    "Nome do projeto",
+                    value=(default_title or "Meu projeto").strip().splitlines()[0][:42],
+                )
+                saved = st.form_submit_button(
+                    "Salvar conversa atual como projeto", use_container_width=True,
+                )
+                if saved:
+                    _snapshot_conversation(pinned=True, title=name.strip() or "Projeto")
+                    st.toast("Projeto salvo", icon=":material/bookmark:")
+            st.markdown('<div style="height:8px;"></div>', unsafe_allow_html=True)
+
+        pinned = [c for c in st.session_state.conversations if c["pinned"]]
+        if not pinned:
+            st.markdown(
+                '<div class="panel-empty">Nenhum projeto salvo ainda.<br>'
+                'Salve a conversa atual acima, ou marque uma conversa do '
+                'historico com a estrela.</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            for c in pinned:
+                st.markdown(_hist_row_html(c), unsafe_allow_html=True)
+
+
+# ============================================================
 # LAYOUT
 # ============================================================
 col_chat, col_preview = st.columns([1, 1.15], gap="medium")
@@ -1259,11 +1688,22 @@ col_chat, col_preview = st.columns([1, 1.15], gap="medium")
 # CHAT
 # ------------------------------------------------------------
 _do_rerun = False
+_panel_active = (
+    st.session_state.show_settings
+    or st.session_state.show_history
+    or st.session_state.show_projects
+)
 
 with col_chat:
 
+    _panel_title = (
+        "Configuracoes" if st.session_state.show_settings
+        else "Historico" if st.session_state.show_history
+        else "Projetos" if st.session_state.show_projects
+        else "Conversa"
+    )
     st.markdown(
-        '<div class="panel-label"><span class="panel-label-title">Conversa</span></div>',
+        f'<div class="panel-label"><span class="panel-label-title">{_panel_title}</span></div>',
         unsafe_allow_html=True,
     )
 
@@ -1279,279 +1719,302 @@ with col_chat:
             )
         st.session_state.messages.append({"role": "user", "content": _prompt})
 
-    _query = (st.session_state.search_query or "").strip().lower()
+    if st.session_state.show_settings:
+        _render_settings_panel()
+    elif st.session_state.show_history:
+        _render_history_panel()
+    elif st.session_state.show_projects:
+        _render_projects_panel()
+    else:
+        _query = (st.session_state.search_query or "").strip().lower()
 
-    chat_box = st.container(height=PANEL_HEIGHT)
+        chat_box = st.container(height=PANEL_HEIGHT)
 
-    with chat_box:
-        if not st.session_state.messages:
+        with chat_box:
+            if not st.session_state.messages:
+                st.markdown(
+                    '<div style="padding: 40px 20px; text-align: center; '
+                    'color: #999; font-size: 13px;">'
+                    'Envie uma mensagem para comecar uma nova conversa.'
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
+
+            for i, msg in enumerate(st.session_state.messages):
+                if _query and _query not in (msg.get("content") or "").lower():
+                    continue
+
+                if msg["role"] == "user":
+                    with st.chat_message("user", avatar=_AVATAR_USER):
+                        if st.session_state.editing_idx == i:
+                            with st.form(f"edit_form_{i}", clear_on_submit=False):
+                                st.markdown(
+                                    '<div style="font-size:11px;font-weight:600;'
+                                    'color:#c96442;letter-spacing:.08em;'
+                                    'text-transform:uppercase;margin-bottom:6px;">'
+                                    'Editando mensagem'
+                                    '</div>',
+                                    unsafe_allow_html=True,
+                                )
+                                new_text = st.text_area(
+                                    "Editar",
+                                    value=msg["content"],
+                                    key=f"edit_area_{i}",
+                                    label_visibility="collapsed",
+                                    height=130,
+                                )
+                                cc1, cc2 = st.columns([1.4, 1])
+                                with cc1:
+                                    save = st.form_submit_button(
+                                        "Salvar e reenviar", use_container_width=True,
+                                    )
+                                with cc2:
+                                    cancel = st.form_submit_button(
+                                        "Cancelar", use_container_width=True,
+                                    )
+                                if save and new_text.strip():
+                                    st.session_state.messages = st.session_state.messages[:i]
+                                    st.session_state.pending_prompt = new_text.strip()
+                                    st.session_state.editing_idx = None
+                                    st.rerun()
+                                if cancel:
+                                    st.session_state.editing_idx = None
+                                    st.rerun()
+                        else:
+                            st.markdown(msg["content"])
+                            st.markdown(
+                                f'<div class="msg-actions">'
+                                f'<a class="msg-action" href="?a=edit&i={i}" target="_self">'
+                                f'{ICON_EDIT}<span>editar</span></a>'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
+                else:
+                    with st.chat_message("assistant", avatar=_AVATAR_AI):
+                        if msg.get("thinking"):
+                            with st.expander("Processando raciocinio"):
+                                st.markdown(msg["thinking"])
+                        if msg.get("content"):
+                            st.markdown(msg["content"])
+                        if msg.get("has_artifact"):
+                            _fnames = msg.get("artifact_files") or []
+                            _badge_extra = (
+                                " · " + ", ".join(_fnames) if len(_fnames) > 1 else ""
+                            )
+                            st.markdown(
+                                '<span class="artifact-badge">Artifact '
+                                f'{(msg.get("artifact_lang") or "html").upper()}'
+                                f'{_badge_extra}</span>',
+                                unsafe_allow_html=True,
+                            )
+                        is_last = (i == len(st.session_state.messages) - 1)
+                        if is_last:
+                            st.markdown(
+                                f'<div class="msg-actions">'
+                                f'<a class="msg-action" href="?a=regen" target="_self">'
+                                f'{ICON_REFRESH}<span>regenerar</span></a>'
+                                f'</div>',
+                                unsafe_allow_html=True,
+                            )
+
+            if _prompt:
+                with st.chat_message("assistant", avatar=_AVATAR_AI):
+
+                    stop_holder = st.empty()
+                    with stop_holder:
+                        st.markdown(
+                            f'<div class="stop-wrap">'
+                            f'<a href="?a=stop_generation" target="_self">'
+                            f'{ICON_STOP}<span>Parar geracao</span></a>'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
+
+                    thinking_slot = st.expander("Processando raciocinio", expanded=False)
+                    with thinking_slot:
+                        thinking_body = st.empty()
+
+                    text_body = st.empty()
+
+                    raw_buffer = ""
+                    reasoning_accum = ""
+
+                    try:
+                        api_messages = (
+                            [{"role": "system", "content": build_system_prompt()}]
+                            + st.session_state.messages
+                        )
+
+                        completion = client.chat.completions.create(
+                            model=MODEL,
+                            messages=api_messages,
+                            temperature=st.session_state.temperature,
+                            top_p=st.session_state.top_p,
+                            max_tokens=st.session_state.max_tokens,
+                            extra_body={"chat_template_kwargs": {"enable_thinking": True}},
+                            stream=True,
+                        )
+
+                        for chunk in completion:
+                            if st.session_state.get("stop_requested"):
+                                break
+                            if not chunk.choices:
+                                continue
+                            delta = chunk.choices[0].delta
+
+                            reasoning = getattr(delta, "reasoning_content", None)
+                            if reasoning:
+                                reasoning_accum += reasoning
+                                thinking_body.markdown(
+                                    reasoning_accum + '<span class="cursor"></span>',
+                                    unsafe_allow_html=True,
+                                )
+
+                            if delta.content:
+                                raw_buffer += delta.content
+
+                                partial_visible, partial_think = extract_thinking(raw_buffer)
+                                partial_visible, _, _ = extract_artifact(partial_visible)
+                                partial_visible = _strip_dangling(partial_visible)
+                                partial_visible = _maybe_strip_emojis(partial_visible)
+
+                                combined = "\n\n".join(
+                                    filter(None, [reasoning_accum, partial_think])
+                                )
+                                if combined:
+                                    thinking_body.markdown(
+                                        combined + '<span class="cursor"></span>',
+                                        unsafe_allow_html=True,
+                                    )
+                                if partial_visible:
+                                    text_body.markdown(
+                                        partial_visible + '<span class="cursor"></span>',
+                                        unsafe_allow_html=True,
+                                    )
+
+                        stop_holder.empty()
+
+                        parsed = parse_response(raw_buffer)
+                        final_thinking = "\n\n".join(
+                            filter(None, [reasoning_accum, parsed["thinking"]])
+                        )
+
+                        if final_thinking:
+                            thinking_body.markdown(final_thinking)
+                        else:
+                            thinking_body.markdown("_Sem raciocinio exposto._")
+
+                        text_body.markdown(parsed["text"] or "_Sem resposta._")
+
+                        has_artifact = bool(parsed["artifact_raw"])
+                        art_lang = parsed["lang"]
+                        files_dict = {}
+                        preview_html = None
+
+                        if has_artifact:
+                            files_dict = _parse_files(parsed["artifact_raw"])
+                            preview_html = _build_preview_html(files_dict)
+
+                            st.session_state.artifact_versions.append({
+                                "code":     preview_html,
+                                "files":    files_dict,
+                                "lang":     art_lang,
+                                "ts":       datetime.now().strftime("%H:%M:%S"),
+                                "prompt":   (st.session_state.messages[-1]["content"] or "")[:60],
+                                "thinking": final_thinking,
+                            })
+                            st.session_state.artifact_version_idx = (
+                                len(st.session_state.artifact_versions) - 1
+                            )
+                            st.session_state.current_artifact = preview_html
+                            st.session_state.current_files = files_dict
+                            st.session_state.current_thinking = final_thinking
+                            st.session_state.artifact_lang = art_lang
+                            st.session_state.preview_view = "preview"
+                            st.session_state.selected_file = None
+
+                            _fnames = list(files_dict.keys())
+                            _badge_extra = (
+                                " · " + ", ".join(_fnames) if len(_fnames) > 1 else ""
+                            )
+                            st.markdown(
+                                '<span class="artifact-badge">Artifact '
+                                f'{(art_lang or "html").upper()}{_badge_extra}</span>',
+                                unsafe_allow_html=True,
+                            )
+
+                        st.session_state.messages.append({
+                            "role":            "assistant",
+                            "content":         parsed["text"],
+                            "thinking":        final_thinking,
+                            "has_artifact":    has_artifact,
+                            "artifact_lang":   art_lang if has_artifact else None,
+                            "artifact_files":  list(files_dict.keys()) if has_artifact else [],
+                        })
+
+                    except Exception as e:
+                        st.error(f"Falha ao processar resposta: {e}")
+                        st.session_state.messages.append({
+                            "role":     "assistant",
+                            "content":  f"Erro: {e}",
+                            "thinking": "",
+                        })
+
+                st.session_state.stop_requested = False
+                st.session_state.attached_name = None
+                st.session_state.attached_text = None
+                _do_rerun = True
+
+        if st.session_state.attached_name:
             st.markdown(
-                '<div style="padding: 40px 20px; text-align: center; '
-                'color: #999; font-size: 13px;">'
-                'Envie uma mensagem para comecar uma nova conversa.'
-                '</div>',
+                f'<div class="attach-chip">'
+                f'<span>{st.session_state.attached_name}</span>'
+                f'<a href="?a=clear_attach" target="_self" title="Remover">remover</a>'
+                f'</div>',
                 unsafe_allow_html=True,
             )
 
-        for i, msg in enumerate(st.session_state.messages):
-            # filtro de busca
-            if _query and _query not in (msg.get("content") or "").lower():
-                continue
-
-            if msg["role"] == "user":
-                with st.chat_message("user", avatar=_AVATAR_USER):
-                    if st.session_state.editing_idx == i:
-                        with st.form(f"edit_form_{i}", clear_on_submit=False):
-                            st.markdown(
-                                '<div style="font-size:11px;font-weight:600;'
-                                'color:#c96442;letter-spacing:.08em;'
-                                'text-transform:uppercase;margin-bottom:6px;">'
-                                'Editando mensagem'
-                                '</div>',
-                                unsafe_allow_html=True,
-                            )
-                            new_text = st.text_area(
-                                "Editar",
-                                value=msg["content"],
-                                key=f"edit_area_{i}",
-                                label_visibility="collapsed",
-                                height=130,
-                            )
-                            cc1, cc2 = st.columns([1.4, 1])
-                            with cc1:
-                                save = st.form_submit_button(
-                                    "Salvar e reenviar",
-                                    use_container_width=True,
-                                )
-                            with cc2:
-                                cancel = st.form_submit_button(
-                                    "Cancelar",
-                                    use_container_width=True,
-                                )
-                            if save and new_text.strip():
-                                st.session_state.messages = st.session_state.messages[:i]
-                                st.session_state.pending_prompt = new_text.strip()
-                                st.session_state.editing_idx = None
-                                st.rerun()
-                            if cancel:
-                                st.session_state.editing_idx = None
-                                st.rerun()
-                    else:
-                        st.markdown(msg["content"])
-                        st.markdown(
-                            f'<div class="msg-actions">'
-                            f'<a class="msg-action" href="?a=edit&i={i}" target="_self">'
-                            f'{ICON_EDIT}<span>editar</span></a>'
-                            f'</div>',
-                            unsafe_allow_html=True,
-                        )
-            else:
-                with st.chat_message("assistant", avatar=_AVATAR_AI):
-                    if msg.get("thinking"):
-                        with st.expander("Processando raciocinio"):
-                            st.markdown(msg["thinking"])
-                    if msg.get("content"):
-                        st.markdown(msg["content"])
-                    if msg.get("has_artifact"):
-                        st.markdown(
-                            '<span class="artifact-badge">Artifact '
-                            f'{(msg.get("artifact_lang") or "html").upper()}</span>',
-                            unsafe_allow_html=True,
-                        )
-                    is_last = (i == len(st.session_state.messages) - 1)
-                    if is_last:
-                        st.markdown(
-                            f'<div class="msg-actions">'
-                            f'<a class="msg-action" href="?a=regen" target="_self">'
-                            f'{ICON_REFRESH}<span>regenerar</span></a>'
-                            f'</div>',
-                            unsafe_allow_html=True,
-                        )
-
-        if _prompt:
-            with st.chat_message("assistant", avatar=_AVATAR_AI):
-
-                # botao de parar (best-effort)
-                stop_holder = st.empty()
-                with stop_holder:
-                    st.markdown(
-                        f'<div class="stop-wrap">'
-                        f'<a href="?a=stop_generation" target="_self">'
-                        f'{ICON_STOP}<span>Parar geracao</span></a>'
-                        f'</div>',
-                        unsafe_allow_html=True,
+        with st.form("composer", clear_on_submit=True):
+            c1, c2, c3, c4 = st.columns(
+                [0.35, 6, 0.35, 0.7],
+                gap="small",
+                vertical_alignment="center",
+            )
+            with c1:
+                with st.popover("Anexar", use_container_width=False):
+                    uploaded = st.file_uploader(
+                        "Anexar arquivo",
+                        type=["txt", "md", "py", "js", "html", "css", "json"],
+                        label_visibility="collapsed",
                     )
-
-                thinking_slot = st.expander("Processando raciocinio", expanded=False)
-                with thinking_slot:
-                    thinking_body = st.empty()
-
-                text_body = st.empty()
-
-                raw_buffer = ""
-                reasoning_accum = ""
-
-                try:
-                    api_messages = (
-                        [{"role": "system", "content": SYSTEM_PROMPT}]
-                        + st.session_state.messages
-                    )
-
-                    completion = client.chat.completions.create(
-                        model=MODEL,
-                        messages=api_messages,
-                        temperature=st.session_state.temperature,
-                        top_p=st.session_state.top_p,
-                        max_tokens=st.session_state.max_tokens,
-                        extra_body={"chat_template_kwargs": {"enable_thinking": True}},
-                        stream=True,
-                    )
-
-                    for chunk in completion:
-                        if st.session_state.get("stop_requested"):
-                            break
-                        if not chunk.choices:
-                            continue
-                        delta = chunk.choices[0].delta
-
-                        reasoning = getattr(delta, "reasoning_content", None)
-                        if reasoning:
-                            reasoning_accum += reasoning
-                            thinking_body.markdown(
-                                reasoning_accum + '<span class="cursor"></span>',
-                                unsafe_allow_html=True,
+                    if uploaded is not None:
+                        try:
+                            st.session_state.attached_name = uploaded.name
+                            st.session_state.attached_text = uploaded.read().decode(
+                                "utf-8", errors="ignore"
                             )
+                            st.success(f"Anexado: {uploaded.name}")
+                        except Exception as e:
+                            st.error(f"Erro ao ler arquivo: {e}")
 
-                        if delta.content:
-                            raw_buffer += delta.content
-
-                            partial_visible, partial_think = extract_thinking(raw_buffer)
-                            partial_visible, _, _ = extract_artifact(partial_visible)
-                            partial_visible = _strip_dangling(partial_visible)
-                            partial_visible = strip_emojis(partial_visible)
-
-                            combined = "\n\n".join(
-                                filter(None, [reasoning_accum, partial_think])
-                            )
-                            if combined:
-                                thinking_body.markdown(
-                                    combined + '<span class="cursor"></span>',
-                                    unsafe_allow_html=True,
-                                )
-                            if partial_visible:
-                                text_body.markdown(
-                                    partial_visible + '<span class="cursor"></span>',
-                                    unsafe_allow_html=True,
-                                )
-
-                    stop_holder.empty()
-
-                    parsed = parse_response(raw_buffer)
-                    final_thinking = "\n\n".join(
-                        filter(None, [reasoning_accum, parsed["thinking"]])
-                    )
-
-                    if final_thinking:
-                        thinking_body.markdown(final_thinking)
-                    else:
-                        thinking_body.markdown("_Sem raciocinio exposto._")
-
-                    text_body.markdown(parsed["text"] or "_Sem resposta._")
-
-                    has_artifact = bool(parsed["artifact"])
-                    art_lang = parsed["lang"]
-
-                    if has_artifact:
-                        # registra nova versao
-                        st.session_state.artifact_versions.append({
-                            "code": parsed["artifact"],
-                            "lang": parsed["lang"],
-                            "ts":   datetime.now().strftime("%H:%M:%S"),
-                            "prompt": (st.session_state.messages[-1]["content"] or "")[:60],
-                        })
-                        st.session_state.artifact_version_idx = (
-                            len(st.session_state.artifact_versions) - 1
-                        )
-                        st.session_state.current_artifact = parsed["artifact"]
-                        st.session_state.artifact_lang = parsed["lang"]
-
-                        st.markdown(
-                            '<span class="artifact-badge">Artifact '
-                            f'{(art_lang or "html").upper()}</span>',
-                            unsafe_allow_html=True,
-                        )
-
-                    st.session_state.messages.append({
-                        "role":            "assistant",
-                        "content":         parsed["text"],
-                        "thinking":        final_thinking,
-                        "has_artifact":    has_artifact,
-                        "artifact_lang":   art_lang if has_artifact else None,
-                    })
-
-                except Exception as e:
-                    st.error(f"Falha ao processar resposta: {e}")
-                    st.session_state.messages.append({
-                        "role":     "assistant",
-                        "content":  f"Erro: {e}",
-                        "thinking": "",
-                    })
-
-            st.session_state.stop_requested = False
-            st.session_state.attached_name = None
-            st.session_state.attached_text = None
-            _do_rerun = True
-
-    if st.session_state.attached_name:
-        st.markdown(
-            f'<div class="attach-chip">'
-            f'<span>{st.session_state.attached_name}</span>'
-            f'<a href="?a=clear_attach" target="_self" title="Remover">remover</a>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-
-    with st.form("composer", clear_on_submit=True):
-        c1, c2, c3, c4 = st.columns(
-            [0.35, 6, 0.35, 0.7],
-            gap="small",
-            vertical_alignment="center",
-        )
-        with c1:
-            with st.popover("Anexar", use_container_width=False):
-                uploaded = st.file_uploader(
-                    "Anexar arquivo",
-                    type=["txt", "md", "py", "js", "html", "css", "json"],
+            with c2:
+                user_msg = st.text_input(
+                    "mensagem",
+                    placeholder="Envie uma mensagem para o Aether Engine...",
                     label_visibility="collapsed",
                 )
-                if uploaded is not None:
-                    try:
-                        st.session_state.attached_name = uploaded.name
-                        st.session_state.attached_text = uploaded.read().decode(
-                            "utf-8", errors="ignore"
-                        )
-                        st.success(f"Anexado: {uploaded.name}")
-                    except Exception as e:
-                        st.error(f"Erro ao ler arquivo: {e}")
+            with c3:
+                st.markdown(
+                    f'<a class="composer-mic" href="?a=mic" target="_self" '
+                    f'title="Gravar audio">{ICON_MIC}</a>',
+                    unsafe_allow_html=True,
+                )
+            with c4:
+                submitted = st.form_submit_button("Enviar")
 
-        with c2:
-            user_msg = st.text_input(
-                "mensagem",
-                placeholder="Envie uma mensagem para o Aether Engine...",
-                label_visibility="collapsed",
-            )
-        with c3:
-            st.markdown(
-                f'<a class="composer-mic" href="?a=mic" target="_self" '
-                f'title="Gravar audio">{ICON_MIC}</a>',
-                unsafe_allow_html=True,
-            )
-        with c4:
-            submitted = st.form_submit_button("Enviar")
-
-    if submitted and user_msg.strip():
-        st.session_state.pending_prompt = user_msg.strip()
-        st.rerun()
+        if submitted and user_msg.strip():
+            st.session_state.pending_prompt = user_msg.strip()
+            st.rerun()
 
 
 # ------------------------------------------------------------
@@ -1562,10 +2025,11 @@ with col_preview:
     has_art = bool(st.session_state.current_artifact)
     total_v = len(st.session_state.artifact_versions)
     cur_v   = st.session_state.artifact_version_idx + 1 if total_v else 0
+    files_dict = st.session_state.current_files or {}
+    is_multi_file = len(files_dict) > 1
 
-    # Header do preview: titulo | versao | refresh | editar | download
-    hdr_l, hdr_v, hdr_t, hdr_e, hdr_r = st.columns(
-        [2.8, 1.35, 0.55, 0.55, 1.6],
+    hdr_l, hdr_toggle, hdr_v, hdr_t, hdr_e, hdr_r = st.columns(
+        [2.2, 0.55, 1.35, 0.55, 0.55, 1.6],
         gap="small",
         vertical_alignment="center",
     )
@@ -1576,6 +2040,21 @@ with col_preview:
             '<span class="panel-label-title">Preview</span></div>',
             unsafe_allow_html=True,
         )
+
+    with hdr_toggle:
+        if has_art:
+            if st.session_state.preview_view == "preview":
+                st.markdown(
+                    f'<a class="panel-tool" href="?a=view_code" target="_self" '
+                    f'title="Ver codigo">{ICON_CODE}</a>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    f'<a class="panel-tool" href="?a=view_preview" target="_self" '
+                    f'title="Ver preview">{ICON_EYE}</a>',
+                    unsafe_allow_html=True,
+                )
 
     with hdr_v:
         if has_art and total_v > 0:
@@ -1596,15 +2075,14 @@ with col_preview:
         )
 
     with hdr_e:
-        if has_art:
+        if has_art and st.session_state.preview_view == "preview":
             tool_href = (
                 "?a=cancel_artifact_edit"
                 if st.session_state.artifact_edit_mode
                 else "?a=toggle_artifact_edit"
             )
             tool_title = (
-                "Fechar edicao"
-                if st.session_state.artifact_edit_mode
+                "Fechar edicao" if st.session_state.artifact_edit_mode
                 else "Editar codigo"
             )
             st.markdown(
@@ -1641,70 +2119,118 @@ with col_preview:
             </div>
             """, unsafe_allow_html=True)
 
-        elif st.session_state.artifact_edit_mode:
-            # Modo edicao: substitui o iframe por um textarea
-            # FIX: a key agora inclui o indice da versao. Antes a key era
-            # fixa ("artifact_edit_area"), entao o Streamlit ignorava o
-            # `value=` em reruns seguintes e o textarea ficava preso no
-            # conteudo da primeira vez que essa key foi usada — trocar de
-            # versao e clicar em editar mostrava o codigo errado.
-            _edit_key = f"artifact_edit_area_{st.session_state.artifact_version_idx}"
-            with st.form("artifact_edit_form", clear_on_submit=False):
-                st.markdown(
-                    '<div style="font-size:11px;font-weight:600;'
-                    'color:#c96442;letter-spacing:.08em;'
-                    'text-transform:uppercase;margin-bottom:6px;">'
-                    'Editando artifact'
-                    '</div>',
-                    unsafe_allow_html=True,
-                )
-                edited = st.text_area(
-                    "Codigo",
-                    value=st.session_state.current_artifact,
-                    height=IFRAME_HEIGHT - 110,
-                    label_visibility="collapsed",
-                    key=_edit_key,
-                )
-                ec1, ec2 = st.columns([1.4, 1])
-                with ec1:
-                    apply_edit = st.form_submit_button(
-                        "Aplicar", use_container_width=True
-                    )
-                with ec2:
-                    cancel_edit = st.form_submit_button(
-                        "Cancelar", use_container_width=True
-                    )
-                if apply_edit:
-                    st.session_state.current_artifact = edited
-                    if (
-                        st.session_state.artifact_versions
-                        and 0 <= st.session_state.artifact_version_idx
-                        < len(st.session_state.artifact_versions)
-                    ):
-                        st.session_state.artifact_versions[
-                            st.session_state.artifact_version_idx
-                        ]["code"] = edited
-                    st.session_state.artifact_edit_mode = False
-                    st.rerun()
-                if cancel_edit:
-                    st.session_state.artifact_edit_mode = False
-                    st.rerun()
-
         else:
-            # FIX: injeta um comentario HTML invisivel com o contador de
-            # refresh + indice de versao. Antes o botao "Atualizar" so
-            # reatribuia a mesma string ao session_state, entao o hash do
-            # conteudo nao mudava e o navegador podia manter o iframe
-            # antigo (JS, timers e estado interno do artifact nao reiniciavam).
-            _cache_bust = (
-                f"\n<!-- aether-preview-refresh:{st.session_state.refresh_counter}"
-                f"-v{st.session_state.artifact_version_idx} -->"
-            )
-            components.html(
-                st.session_state.current_artifact + _cache_bust,
-                height=IFRAME_HEIGHT,
-                scrolling=True,
-            )
+            # ---- Painel "o que a IA esta fazendo" (estilo Arena) ----
+            if st.session_state.current_thinking or is_multi_file:
+                with st.expander("Raciocinio da IA", expanded=False):
+                    if st.session_state.current_thinking:
+                        st.markdown(st.session_state.current_thinking)
+                    if files_dict:
+                        _names = ", ".join(f"`{n}`" for n in files_dict.keys())
+                        st.markdown(f"**Arquivos gerados:** {_names}")
+
+            if st.session_state.preview_view == "code":
+                # ---- Modo Codigo: arvore de arquivos + visualizador ----
+                file_names = list(files_dict.keys())
+                if (
+                    st.session_state.selected_file not in file_names
+                    and file_names
+                ):
+                    st.session_state.selected_file = file_names[0]
+
+                f_col1, f_col2 = st.columns([1, 2.4], gap="small")
+                with f_col1:
+                    st.markdown(
+                        '<div style="font-size:11px;font-weight:600;'
+                        'color:var(--text-mute);letter-spacing:.08em;'
+                        'text-transform:uppercase;margin-bottom:8px;">'
+                        'Arquivos</div>',
+                        unsafe_allow_html=True,
+                    )
+                    for fname in file_names:
+                        if st.button(
+                            fname,
+                            key=f"filebtn_{fname}_{st.session_state.artifact_version_idx}",
+                            use_container_width=True,
+                        ):
+                            st.session_state.selected_file = fname
+                            st.rerun()
+
+                with f_col2:
+                    if st.session_state.selected_file:
+                        _ext = st.session_state.selected_file.rsplit(".", 1)[-1].lower()
+                        _lang_map = {
+                            "html": "html", "css": "css", "js": "javascript",
+                            "jsx": "jsx", "json": "json", "py": "python",
+                            "md": "markdown",
+                        }
+                        st.code(
+                            files_dict[st.session_state.selected_file],
+                            language=_lang_map.get(_ext, "text"),
+                        )
+
+            elif st.session_state.artifact_edit_mode:
+                # Modo edicao: substitui o iframe por um textarea.
+                # A key inclui o indice da versao para nao "prender" o
+                # textarea no conteudo de uma versao antiga.
+                _edit_key = f"artifact_edit_area_{st.session_state.artifact_version_idx}"
+                with st.form("artifact_edit_form", clear_on_submit=False):
+                    st.markdown(
+                        '<div style="font-size:11px;font-weight:600;'
+                        'color:#c96442;letter-spacing:.08em;'
+                        'text-transform:uppercase;margin-bottom:6px;">'
+                        'Editando artifact (HTML combinado)'
+                        '</div>',
+                        unsafe_allow_html=True,
+                    )
+                    edited = st.text_area(
+                        "Codigo",
+                        value=st.session_state.current_artifact,
+                        height=IFRAME_HEIGHT - 110,
+                        label_visibility="collapsed",
+                        key=_edit_key,
+                    )
+                    ec1, ec2 = st.columns([1.4, 1])
+                    with ec1:
+                        apply_edit = st.form_submit_button(
+                            "Aplicar", use_container_width=True,
+                        )
+                    with ec2:
+                        cancel_edit = st.form_submit_button(
+                            "Cancelar", use_container_width=True,
+                        )
+                    if apply_edit:
+                        st.session_state.current_artifact = edited
+                        st.session_state.current_files = {"index.html": edited}
+                        if (
+                            st.session_state.artifact_versions
+                            and 0 <= st.session_state.artifact_version_idx
+                            < len(st.session_state.artifact_versions)
+                        ):
+                            _v = st.session_state.artifact_versions[
+                                st.session_state.artifact_version_idx
+                            ]
+                            _v["code"] = edited
+                            _v["files"] = {"index.html": edited}
+                        st.session_state.artifact_edit_mode = False
+                        st.rerun()
+                    if cancel_edit:
+                        st.session_state.artifact_edit_mode = False
+                        st.rerun()
+
+            else:
+                # Comentario invisivel para forcar o navegador a remontar
+                # o iframe de verdade quando "Atualizar" e clicado, ou
+                # quando a versao muda.
+                _cache_bust = (
+                    f"\n<!-- aether-preview-refresh:{st.session_state.refresh_counter}"
+                    f"-v{st.session_state.artifact_version_idx} -->"
+                )
+                components.html(
+                    st.session_state.current_artifact + _cache_bust,
+                    height=IFRAME_HEIGHT,
+                    scrolling=True,
+                )
 
 
 # ============================================================
