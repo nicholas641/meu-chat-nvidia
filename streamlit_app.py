@@ -8,13 +8,29 @@ Preview com file tree + raciocinio da IA (estilo "Arena").
 
 import os
 import re
-import uuid
 import urllib.parse
+import pickle  # Adicionado para salvar as configurações
 from datetime import datetime
+import uuid
 
 import streamlit as st
 import streamlit.components.v1 as components
 from openai import OpenAI
+
+# Funções automáticas de persistência de dados
+def salvar_historico_no_disco():
+    with open("backup_chat.pkl", "wb") as f:
+        pickle.dump(st.session_state.messages, f)
+
+def carregar_historico_do_disco():
+    if os.path.exists("backup_chat.pkl"):
+        try:
+            with open("backup_chat.pkl", "rb") as f:
+                return pickle.load(f)
+        except Exception:
+            return []
+    return []
+
 
 
 # ============================================================
@@ -151,22 +167,15 @@ st.set_page_config(
 # SESSION STATE
 # ============================================================
 _DEFAULTS = {
-    "messages":             [],
-    "current_artifact":     None,
-    "current_files":        {},   # dict {nome_arquivo: conteudo} da versao atual
-    "current_thinking":     "",   # raciocinio associado a versao atual do artifact
-    "artifact_lang":        None,
-    "artifact_versions":    [],   # lista de dicts {code, files, lang, ts, prompt, thinking}
-    "artifact_version_idx": -1,
-    "artifact_edit_mode":   False,
-    "preview_view":         "preview",  # "preview" ou "code"
-    "selected_file":        None,
-    "pending_prompt":       None,
-    "temperature":          1.0,
-    "top_p":                0.95,
-    "max_tokens":           8192,
-    "attached_name":        None,
-    "attached_text":        None,
+    "messages":         carregar_historico_do_disco(),  # Agora carrega do arquivo salvo!
+    "current_artifact": None,
+    "artifact_lang":    None,
+    "pending_prompt":   None,
+    "temperature":      1.0,
+    "top_p":            0.95,
+    "max_tokens":       8192,
+    "attached_name":    None,
+    "attached_text":    None,
     "editing_idx":          None,  # indice de mensagem sendo editada
     "stop_requested":       False,
     "search_query":         "",
@@ -322,29 +331,12 @@ if _action:
         st.toast("Anexo removido", icon=":material/delete:")
 
     elif _action == "clear_chat":
-        _reset_conversation()
-        _close_panels()
+        st.session_state.messages = []
+        st.session_state.current_artifact = None
+        if os.path.exists("backup_chat.pkl"):
+            os.remove("backup_chat.pkl")
         st.rerun()
 
-    # ---- Edicao de mensagem ----
-    elif _action == "edit" and _idx_qp is not None:
-        try:
-            st.session_state.editing_idx = int(_idx_qp)
-        except ValueError:
-            st.session_state.editing_idx = None
-
-    elif _action == "cancel_edit":
-        st.session_state.editing_idx = None
-
-    # ---- Regenerar ----
-    elif _action == "regen":
-        msgs = st.session_state.messages
-        if msgs and msgs[-1]["role"] == "assistant":
-            msgs.pop()
-        if msgs and msgs[-1]["role"] == "user":
-            last_user = msgs.pop()
-            st.session_state.pending_prompt = last_user["content"]
-        st.rerun()
 
     # ---- Navegacao de versoes do artifact ----
     elif _action == "artifact_prev":
@@ -1717,7 +1709,9 @@ with col_chat:
                 f"[Arquivo anexado: {st.session_state.attached_name}]\n"
                 f"```\n{st.session_state.attached_text[:4000]}\n```"
             )
-        st.session_state.messages.append({"role": "user", "content": _prompt})
+            st.session_state.messages.append({"role": "user", "content": _prompt})
+        salvar_historico_no_disco()  # Salva a mensagem do usuário imediatamente
+
 
     if st.session_state.show_settings:
         _render_settings_panel()
@@ -1951,6 +1945,7 @@ with col_chat:
                             "artifact_lang":   art_lang if has_artifact else None,
                             "artifact_files":  list(files_dict.keys()) if has_artifact else [],
                         })
+                        salvar_historico_no_disco()
 
                     except Exception as e:
                         st.error(f"Falha ao processar resposta: {e}")
@@ -1959,6 +1954,8 @@ with col_chat:
                             "content":  f"Erro: {e}",
                             "thinking": "",
                         })
+                        salvar_historico_no_disco()
+
 
                 st.session_state.stop_requested = False
                 st.session_state.attached_name = None
