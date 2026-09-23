@@ -222,7 +222,13 @@ def extract_thinking(text: str):
 
 
 def _detect_lang(code: str) -> str:
-    return "svg" if ("<svg" in code.lower() and "<html" not in code.lower()) else "html"
+    """Detecta a linguagem do artifact: 'svg' ou 'html'."""
+    if not code:
+        return "html"
+    lowered = code.lower()
+    has_svg = "<svg" in lowered
+    has_html = "<html" in lowered or "<!doctype" in lowered
+    return "svg" if (has_svg and not has_html) else "html"
 
 
 def extract_artifact(text: str):
@@ -268,6 +274,13 @@ def _download_filename() -> str:
 
 
 # ============================================================
+# CONSTANTES DE LAYOUT
+# ============================================================
+PANEL_HEIGHT = 610          # altura fixa dos paineis (chat e preview)
+IFRAME_HEIGHT = 560         # altura do iframe dentro do preview
+
+
+# ============================================================
 # CSS
 # ============================================================
 st.markdown("""
@@ -305,6 +318,7 @@ st.markdown("""
         --radius-sm:    8px;
         --radius-md:    10px;
         --radius-lg:    14px;
+        --panel-h:      610px;
     }
 
     #MainMenu { visibility: hidden; }
@@ -350,11 +364,12 @@ st.markdown("""
         max-width: 100% !important;
     }
 
-    /* ---------- ALTURAS RELATIVAS ---------- */
+    /* ---------- ALTURA FIXA DOS PAINEIS (610px) ---------- */
+    [data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="stVerticalBlock"]),
     [data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stVerticalBlock"]) {
-        height: clamp(260px, 46vh, 560px) !important;
-        max-height: 560px !important;
-        min-height: 260px !important;
+        height: var(--panel-h) !important;
+        max-height: var(--panel-h) !important;
+        min-height: var(--panel-h) !important;
         overflow: hidden !important;
     }
     [data-testid="stVerticalBlockBorderWrapper"] > div {
@@ -893,7 +908,7 @@ st.markdown("""
         justify-content: center;
         text-align: center;
         padding: 40px 24px;
-        min-height: 300px;
+        min-height: 480px;
     }
     .preview-empty-icon {
         width: 78px;
@@ -1033,26 +1048,70 @@ st.markdown("""
     }
     ::-webkit-scrollbar-thumb:hover { background: #c9c6be; }
 
+    /* ---------- MENU MOBILE ---------- */
+    /* Esconde o botao de menu nativo no desktop (ja temos a sidebar fixa). */
+    [data-testid="stSidebarNav"] { display: none !important; }
+
+    /* Em telas pequenas: libera o toggle nativo + overlay da sidebar. */
     @media (max-width: 900px) {
+        [data-testid="stSidebarCollapseButton"],
+        [data-testid="stSidebarCollapseButton"] button,
+        button[kind="header"],
+        [data-testid="collapsedControl"] {
+            display: flex !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+        }
+        [data-testid="collapsedControl"] {
+            background: var(--card) !important;
+            border: 1px solid var(--border) !important;
+            border-radius: var(--radius-sm) !important;
+            box-shadow: var(--shadow-sm) !important;
+            color: var(--accent) !important;
+            top: 12px !important;
+            left: 12px !important;
+        }
+
         section[data-testid="stSidebar"] {
-            width: 180px !important;
-            min-width: 180px !important;
-            max-width: 180px !important;
+            width: 240px !important;
+            min-width: 240px !important;
+            max-width: 240px !important;
+            box-shadow: 2px 0 18px rgba(0,0,0,.08);
+        }
+        section[data-testid="stSidebar"][aria-expanded="false"] {
+            margin-left: -240px !important;
+            transition: margin-left 0.2s ease;
+        }
+        section[data-testid="stSidebar"][aria-expanded="true"] {
+            transition: margin-left 0.2s ease;
+        }
+
+        .app-header {
+            padding: 10px 14px 10px 56px !important;
+            margin-bottom: 8px;
         }
         .app-brand-tag { display: none; }
-        .preview-empty { min-height: 240px; padding: 30px 20px; }
+
+        [data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stVerticalBlock"]) {
+            height: var(--panel-h) !important;
+            max-height: var(--panel-h) !important;
+            min-height: var(--panel-h) !important;
+        }
+
+        .preview-empty { min-height: 420px; padding: 30px 20px; }
     }
 
-    @media (max-height: 700px) {
-        [data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stVerticalBlock"]) {
-            height: 34vh !important;
-            min-height: 220px !important;
-            max-height: 400px !important;
+    @media (max-width: 640px) {
+        .block-container {
+            padding: 0.4rem 0.75rem 0.4rem 0.75rem !important;
         }
-        .app-header { padding: 8px 16px; margin-bottom: 8px; }
-        .app-brand-mark { width: 28px; height: 28px; font-size: 15px; }
-        .app-brand-tag { display: none; }
-        .preview-empty { min-height: 200px; padding: 20px 16px; }
+        .app-header {
+            padding: 8px 12px 8px 52px !important;
+        }
+        .app-brand-name { font-size: 14px; }
+        .app-status { padding: 5px 10px; font-size: 11px; }
+        .preview-empty { min-height: 340px; padding: 24px 16px; }
+        .preview-empty-icon { width: 64px; height: 64px; margin-bottom: 16px; }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -1143,7 +1202,7 @@ with col_chat:
             )
         st.session_state.messages.append({"role": "user", "content": _prompt})
 
-    chat_box = st.container(height=420)
+    chat_box = st.container(height=PANEL_HEIGHT)
 
     with chat_box:
         if not st.session_state.messages:
@@ -1353,13 +1412,13 @@ with col_preview:
                 key="dl_artifact",
             )
 
-    preview_box = st.container(height=420)
+    preview_box = st.container(height=PANEL_HEIGHT)
 
     with preview_box:
         if st.session_state.current_artifact:
             components.html(
                 st.session_state.current_artifact,
-                height=380,
+                height=IFRAME_HEIGHT,
                 scrolling=True,
             )
         else:
