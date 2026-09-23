@@ -232,29 +232,20 @@ def _detect_lang(code: str) -> str:
 
 
 def extract_artifact(text: str):
-    m = _ARTIFACT_RE.search(text)
+    # Procura por <artifact> ou <Artifact> (ignora maiúsculas/minúsculas)
+    m = re.search(r'<(artifact|Artifact)[^>]*>(.*?)</\1>', text, re.DOTALL)
+    if m:
+        code = m.group(2).strip()
+        return text.strip(), code, "html"
+
+    # Se a IA usar o bloco padrão de programação markdown ```html, captura também!
+    m = re.search(r"```html\s*\n(.*?)```", text, re.DOTALL | re.IGNORECASE)
     if m:
         code = m.group(1).strip()
-        return _ARTIFACT_RE.sub("", text).strip(), code, _detect_lang(code)
-
-    m = _HTML_BLOCK.search(text)
-    if m:
-        code = m.group(1).strip()
-        return _HTML_BLOCK.sub("", text).strip(), code, "html"
-
-    m = _SVG_BLOCK.search(text)
-    if m:
-        svg = m.group(1).strip()
-        wrapped = (
-            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-            "<style>html,body{margin:0;padding:0;background:#fbfaf7;}"
-            "body{display:flex;align-items:center;justify-content:center;"
-            "min-height:100vh;}</style></head><body>"
-            f"{svg}</body></html>"
-        )
-        return _SVG_BLOCK.sub("", text).strip(), wrapped, "svg"
+        return text.strip(), code, "html"
 
     return text.strip(), None, None
+
 
 
 def parse_response(raw: str) -> dict:
