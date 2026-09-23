@@ -1936,7 +1936,6 @@ with col_chat:
                 vertical_alignment="center",
             )
             with c1:
-            with c1:
                 with st.popover("Anexar", use_container_width=False):
                     uploaded = st.file_uploader(
                         "Anexar arquivo",
