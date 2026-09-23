@@ -1936,3 +1936,255 @@ with col_chat:
                 vertical_alignment="center",
             )
             with c1:
+            with c1:
+                with st.popover("Anexar", use_container_width=False):
+                    uploaded = st.file_uploader(
+                        "Anexar arquivo",
+                        type=["txt", "md", "py", "js", "html", "css", "json"],
+                        label_visibility="collapsed",
+                    )
+                    if uploaded is not None:
+                        try:
+                            st.session_state.attached_name = uploaded.name
+                            st.session_state.attached_text = uploaded.read().decode(
+                                "utf-8", errors="ignore"
+                            )
+                            st.success(f"Anexado: {uploaded.name}")
+                        except Exception as e:
+                            st.error(f"Erro ao ler arquivo: {e}")
+
+            with c2:
+                user_msg = st.text_input(
+                    "mensagem",
+                    placeholder="Envie uma mensagem para o Aether Engine...",
+                    label_visibility="collapsed",
+                )
+            with c3:
+                st.markdown(
+                    f'<a class="composer-mic" href="?a=mic" target="_self" '
+                    f'title="Gravar audio">{ICON_MIC}</a>',
+                    unsafe_allow_html=True,
+                )
+            with c4:
+                submitted = st.form_submit_button("Enviar")
+
+        if submitted and user_msg.strip():
+            st.session_state.pending_prompt = user_msg.strip()
+            st.rerun()
+
+
+# ------------------------------------------------------------
+# PREVIEW
+# ------------------------------------------------------------
+with col_preview:
+
+    has_art = bool(st.session_state.current_artifact)
+    total_v = len(st.session_state.get("artifact_versions", []))
+    cur_v   = st.session_state.get("artifact_version_idx", -1) + 1 if total_v else 0
+    files_dict = st.session_state.current_files or {}
+    is_multi_file = len(files_dict) > 1
+
+    hdr_l, hdr_toggle, hdr_v, hdr_t, hdr_e, hdr_r = st.columns(
+        [2.2, 0.55, 1.35, 0.55, 0.55, 1.6],
+        gap="small",
+        vertical_alignment="center",
+    )
+
+    with hdr_l:
+        st.markdown(
+            '<div class="panel-label" style="padding:0;margin:0;">'
+            '<span class="panel-label-title">Preview</span></div>',
+            unsafe_allow_html=True,
+        )
+
+    with hdr_toggle:
+        if has_art:
+            if st.session_state.preview_view == "preview":
+                st.markdown(
+                    f'<a class="panel-tool" href="?a=view_code" target="_self" '
+                    f'title="Ver codigo">{ICON_CODE}</a>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    f'<a class="panel-tool" href="?a=view_preview" target="_self" '
+                    f'title="Ver preview">{ICON_EYE}</a>',
+                    unsafe_allow_html=True,
+                )
+
+    with hdr_v:
+        if has_art and total_v > 0:
+            st.markdown(
+                f'<div class="version-nav">'
+                f'<a href="?a=artifact_prev" target="_self" title="Versao anterior">{ICON_BACK}</a>'
+                f'<span>{cur_v}/{total_v}</span>'
+                f'<a href="?a=artifact_next" target="_self" title="Proxima versao">{ICON_NEXT}</a>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+    with hdr_t:
+        st.markdown(
+            f'<a class="panel-tool" href="?a=refresh" target="_self" '
+            f'title="Atualizar">{ICON_REFRESH}</a>',
+            unsafe_allow_html=True,
+        )
+
+    with hdr_e:
+        if has_art and st.session_state.preview_view == "preview":
+            tool_href = (
+                "?a=cancel_artifact_edit"
+                if st.session_state.artifact_edit_mode
+                else "?a=toggle_artifact_edit"
+            )
+            tool_title = (
+                "Fechar edicao" if st.session_state.artifact_edit_mode
+                else "Editar codigo"
+            )
+            st.markdown(
+                f'<a class="panel-tool" href="{tool_href}" target="_self" '
+                f'title="{tool_title}">{ICON_EDIT}</a>',
+                unsafe_allow_html=True,
+            )
+
+    with hdr_r:
+        if has_art:
+            st.download_button(
+                label="Baixar HTML",
+                data=st.session_state.current_artifact,
+                file_name=_download_filename(),
+                mime="text/html",
+                use_container_width=True,
+                key="dl_artifact",
+            )
+
+    preview_box = st.container(height=PANEL_HEIGHT)
+
+    with preview_box:
+        if not has_art:
+            st.markdown(f"""
+            <div class="preview-empty">
+                <div class="preview-empty-icon">{ICON_IMAGE}</div>
+                <div class="preview-empty-title">Seu preview aparecera aqui</div>
+                <div class="preview-empty-text">
+                    Peca ao Aether para gerar uma interface ou componente visual.
+                </div>
+                <a class="preview-empty-btn" href="?a=example" target="_self">
+                    Ver exemplo
+                </a>
+            </div>
+            """, unsafe_allow_html=True)
+
+        else:
+            # ---- Painel "o que a IA esta fazendo" (estilo Arena) ----
+            if st.session_state.current_thinking or is_multi_file:
+                with st.expander("Raciocinio da IA", expanded=False):
+                    if st.session_state.current_thinking:
+                        st.markdown(st.session_state.current_thinking)
+                    if files_dict:
+                        _names = ", ".join(f"`{n}`" for n in files_dict.keys())
+                        st.markdown(f"**Arquivos gerados:** {_names}")
+
+            if st.session_state.preview_view == "code":
+                # ---- Modo Codigo: arvore de arquivos + visualizador ----
+                file_names = list(files_dict.keys())
+                if (
+                    st.session_state.selected_file not in file_names
+                    and file_names
+                ):
+                    st.session_state.selected_file = file_names[0]
+
+                f_col1, f_col2 = st.columns([1, 2.4], gap="small")
+                with f_col1:
+                    st.markdown(
+                        '<div style="font-size:11px;font-weight:600;'
+                        'color:var(--text-mute);letter-spacing:.08em;'
+                        'text-transform:uppercase;margin-bottom:8px;">'
+                        'Arquivos</div>',
+                        unsafe_allow_html=True,
+                    )
+                    for fname in file_names:
+                        if st.button(
+                            fname,
+                            key=f"filebtn_{fname}_{st.session_state.artifact_version_idx}",
+                            use_container_width=True,
+                        ):
+                            st.session_state.selected_file = fname
+                            st.rerun()
+
+                with f_col2:
+                    if st.session_state.selected_file:
+                        _ext = st.session_state.selected_file.rsplit(".", 1)[-1].lower()
+                        _lang_map = {
+                            "html": "html", "css": "css", "js": "javascript",
+                            "jsx": "jsx", "json": "json", "py": "python",
+                            "md": "markdown",
+                        }
+                        st.code(
+                            files_dict[st.session_state.selected_file],
+                            language=_lang_map.get(_ext, "text"),
+                        )
+
+            elif st.session_state.artifact_edit_mode:
+                _edit_key = f"artifact_edit_area_{st.session_state.artifact_version_idx}"
+                with st.form("artifact_edit_form", clear_on_submit=False):
+                    st.markdown(
+                        '<div style="font-size:11px;font-weight:600;'
+                        'color:#c96442;letter-spacing:.08em;'
+                        'text-transform:uppercase;margin-bottom:6px;">'
+                        'Editando artifact (HTML combinado)'
+                        '</div>',
+                        unsafe_allow_html=True,
+                    )
+                    edited = st.text_area(
+                        "Codigo",
+                        value=st.session_state.current_artifact,
+                        height=IFRAME_HEIGHT - 110,
+                        label_visibility="collapsed",
+                        key=_edit_key,
+                    )
+                    ec1, ec2 = st.columns([1.4, 1])
+                    with ec1:
+                        apply_edit = st.form_submit_button(
+                            "Aplicar", use_container_width=True,
+                        )
+                    with ec2:
+                        cancel_edit = st.form_submit_button(
+                            "Cancelar", use_container_width=True,
+                        )
+                    if apply_edit:
+                        st.session_state.current_artifact = edited
+                        st.session_state.current_files = {"index.html": edited}
+                        if (
+                            st.session_state.artifact_versions
+                            and 0 <= st.session_state.artifact_version_idx
+                            < len(st.session_state.artifact_versions)
+                        ):
+                            _v = st.session_state.artifact_versions[
+                                st.session_state.artifact_version_idx
+                            ]
+                            _v["code"] = edited
+                            _v["files"] = {"index.html": edited}
+                        st.session_state.artifact_edit_mode = False
+                        st.rerun()
+                    if cancel_edit:
+                        st.session_state.artifact_edit_mode = False
+                        st.rerun()
+
+            else:
+                _cache_bust = (
+                    f"\n<!-- aether-preview-refresh:{st.session_state.refresh_counter}"
+                    f"-v{st.session_state.artifact_version_idx} -->"
+                )
+                components.html(
+                    st.session_state.current_artifact + _cache_bust,
+                    height=IFRAME_HEIGHT,
+                    scrolling=True,
+                )
+
+
+# ============================================================
+# RERUN
+# ============================================================
+if _do_rerun:
+    st.rerun()
