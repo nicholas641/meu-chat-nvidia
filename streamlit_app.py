@@ -1,13 +1,11 @@
 """
 Aether Engine — Chat IA
 -----------------------
-Layout Claude-like: sidebar + chat centralizado + raciocinio visivel.
-Sem preview de artifact — apenas conversa.
+Chat normal com IA. Raciocinio visivel em expander colapsavel.
 """
 
 import os
 import pickle
-import re
 import urllib.parse
 from datetime import datetime
 import uuid
@@ -102,21 +100,22 @@ ICON_STOP    = _svg('<rect x="6" y="6" width="12" height="12" rx="2"/>', 14)
 ICON_STAR    = _svg('<polygon points="12 2 15 9 22 9.3 16.5 14 18.5 21 12 17 5.5 21 7.5 14 2 9.3 9 9"/>', 14)
 ICON_ARROWL  = _svg('<path d="M19 12H5M12 19l-7-7 7-7"/>', 15)
 ICON_BRAIN   = _svg('<path d="M9.5 2a3.5 3.5 0 0 0-3.5 3.5v.5A3 3 0 0 0 4 9v1a3 3 0 0 0 1 2.2V15a4 4 0 0 0 4 4h.5V2H9.5z"/><path d="M14.5 2a3.5 3.5 0 0 1 3.5 3.5v.5A3 3 0 0 1 20 9v1a3 3 0 0 1-1 2.2V15a4 4 0 0 1-4 4h-.5V2h.5z"/>', 15)
-ICON_COPY    = _svg('<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>', 14)
 
 
 # ============================================================
-# SYSTEM PROMPT
+# SYSTEM PROMPT — assistente normal
 # ============================================================
-BASE_SYSTEM_PROMPT = """You are Aether Engine, a professional technical assistant.
+BASE_SYSTEM_PROMPT = """You are Aether, a helpful, friendly AI assistant.
 
-Behavior:
-- Be concise and direct.
-- Respond in the same language the user writes in.
-- When the user requests code, always include the full code in a fenced
-  markdown block (```lang ... ```), well-formatted and complete.
-- Prefer to explain your reasoning step by step before delivering the final
-  answer, especially for technical or code tasks.
+- Respond naturally and conversationally, in the same language the user
+  writes in.
+- Be direct and useful. No need to be overly formal.
+- When the user asks for code, provide the code in a normal fenced
+  markdown block (```lang ... ```). Do NOT wrap it in special tags like
+  <artifact> unless the user explicitly asks for that.
+- Never invent tools, artifacts, preview panels, or capabilities you do
+  not have. You are a chat assistant.
+- Keep reasoning concise and useful; do not pad with filler.
 """
 
 
@@ -125,8 +124,8 @@ def build_system_prompt() -> str:
     custom = (st.session_state.get("custom_instructions") or "").strip()
     if custom:
         prompt += (
-            "\n\nUser personalization instructions (ALWAYS follow these, "
-            "they override the default tone/style):\n" + custom
+            "\n\nUser personalization instructions (ALWAYS follow these):\n"
+            + custom
         )
     return prompt
 
@@ -308,40 +307,7 @@ if _action:
 
 
 # ============================================================
-# HELPERS DE TEXTO / PARSING
-# ============================================================
-_THINK_RE    = re.compile(r"<thinking>(.*?)</thinking>", re.DOTALL | re.IGNORECASE)
-_ARTIFACT_RE = re.compile(r"<artifact[^>]*>(.*?)</artifact>", re.DOTALL | re.IGNORECASE)
-_HTML_BLOCK  = re.compile(r"```html\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
-_FILE_RE     = re.compile(r'<file\s+(?:name|path)=["\']([^"\']+)["\']\s*>(.*?)</file>', re.DOTALL | re.IGNORECASE)
-_DANGLING_RE = re.compile(r"<(thinking|artifact)\b[^>]*>(?![^<]*</\1>)", re.IGNORECASE)
-
-
-def _strip_dangling(text: str) -> str:
-    return _DANGLING_RE.sub("", text)
-
-
-def extract_thinking(text: str):
-    blocks = _THINK_RE.findall(text)
-    thinking = "\n\n".join(b.strip() for b in blocks)
-    return _THINK_RE.sub("", text).strip(), thinking.strip()
-
-
-def strip_artifacts(text: str) -> str:
-    """Remove blocos <artifact> e <file> do texto visivel."""
-    text = _ARTIFACT_RE.sub("", text)
-    text = _FILE_RE.sub("", text)
-    return text.strip()
-
-
-def parse_response(raw: str) -> dict:
-    visible, thinking = extract_thinking(raw)
-    visible = strip_artifacts(visible)
-    return {"text": visible, "thinking": thinking}
-
-
-# ============================================================
-# CSS — Claude-like UI, foco em chat + raciocinio
+# CSS
 # ============================================================
 st.markdown("""
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -411,22 +377,16 @@ st.markdown("""
         -webkit-font-smoothing: antialiased;
         text-rendering: optimizeLegibility;
     }
-
     .stApp, [data-testid="stAppViewContainer"] {
         background-color: var(--bg) !important;
     }
-
     .block-container {
         padding: 0.6rem 1.4rem 1rem 1.4rem !important;
         max-width: 100% !important;
     }
 
-    /* ============================================================
-       FIX DO INPUT ESCURO
-       ============================================================ */
-    input,
-    textarea,
-    [contenteditable],
+    /* FIX INPUT ESCURO */
+    input, textarea, [contenteditable],
     [data-testid="stTextInput"],
     [data-testid="stTextInput"] > div,
     [data-testid="stTextInput"] > div > div,
@@ -448,24 +408,22 @@ st.markdown("""
         -webkit-text-fill-color: #1f1e1c !important;
         caret-color: #c96442 !important;
     }
-    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stTextInput"],
-    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stTextInput"] > div,
-    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stTextInput"] > div > div,
-    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-baseweb="input"],
-    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-baseweb="base-input"],
-    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stTextInput"] input {
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether..."]) [data-testid="stTextInput"],
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether..."]) [data-testid="stTextInput"] > div,
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether..."]) [data-testid="stTextInput"] > div > div,
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether..."]) [data-baseweb="input"],
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether..."]) [data-baseweb="base-input"],
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether..."]) [data-testid="stTextInput"] input {
         background-color: transparent !important;
     }
-    input::placeholder,
-    textarea::placeholder,
+    input::placeholder, textarea::placeholder,
     [data-baseweb="input"] input::placeholder,
     [data-baseweb="textarea"] textarea::placeholder {
         color: #9a978e !important;
         -webkit-text-fill-color: #9a978e !important;
         opacity: 1 !important;
     }
-    [data-testid="stForm"],
-    [data-testid="stSidebarContent"] {
+    [data-testid="stForm"], [data-testid="stSidebarContent"] {
         background-color: #ffffff !important;
     }
 
@@ -481,9 +439,7 @@ st.markdown("""
         background: var(--bg-code) !important;
     }
 
-    /* ============================================================
-       SIDEBAR
-       ============================================================ */
+    /* SIDEBAR */
     section[data-testid="stSidebar"] {
         width: 248px !important;
         min-width: 248px !important;
@@ -557,9 +513,7 @@ st.markdown("""
     .sb-btn-primary:hover { background: var(--accent-hover); color: #ffffff !important; }
     .sb-btn-primary svg { opacity: 1; }
 
-    /* ============================================================
-       HEADER
-       ============================================================ */
+    /* HEADER */
     .app-header {
         display: flex; align-items: center; justify-content: space-between;
         padding: 4px 6px 12px 6px;
@@ -589,9 +543,7 @@ st.markdown("""
         box-shadow: 0 0 0 3px rgba(107,169,68,.15);
     }
 
-    /* ============================================================
-       CHAT — centralizado, max-width 800px
-       ============================================================ */
+    /* CHAT */
     [data-testid="stChatMessage"] {
         background: transparent !important;
         border: none !important; border-radius: 0 !important;
@@ -626,10 +578,6 @@ st.markdown("""
         max-width: 78% !important; flex: 0 1 auto !important;
     }
 
-    [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) {
-        margin-bottom: 26px !important;
-    }
-
     [data-testid="stChatMessage"] p,
     [data-testid="stChatMessage"] span,
     [data-testid="stChatMessage"] li {
@@ -650,10 +598,7 @@ st.markdown("""
         to   { opacity: 1; transform: translateY(0); }
     }
 
-    /* ============================================================
-       RACIOCINIO — destaque bonito
-       ============================================================ */
-    [data-testid="stChatMessage"] [data-testid="stExpander"]:has(summary:has-text("Processando raciocinio")),
+    /* RACIOCINIO */
     [data-testid="stChatMessage"] [data-testid="stExpander"] {
         border: 1px solid var(--border-soft) !important;
         background: var(--bg-think) !important;
@@ -661,7 +606,7 @@ st.markdown("""
         margin: 0 0 16px 0 !important;
         padding: 0 !important;
         overflow: hidden !important;
-        transition: border-color 0.15s ease, background-color 0.15s ease;
+        transition: border-color 0.15s ease;
     }
     [data-testid="stChatMessage"] [data-testid="stExpander"]:hover {
         border-color: var(--border) !important;
@@ -698,28 +643,15 @@ st.markdown("""
         padding: 14px 18px !important;
         margin: 0 !important;
         background: transparent !important;
-        animation: slideDown 0.25s ease;
     }
     [data-testid="stChatMessage"] [data-testid="stExpanderDetails"] p,
     [data-testid="stChatMessage"] [data-testid="stExpanderDetails"] li {
         font-size: 13.5px !important;
         color: var(--text-dim) !important;
         line-height: 1.75 !important;
-        font-style: normal !important;
         opacity: 1 !important;
     }
-    [data-testid="stChatMessage"] [data-testid="stExpanderDetails"] code {
-        font-size: 12.5px !important;
-        background: var(--bg-code) !important;
-        padding: 2px 6px !important; border-radius: 4px !important;
-    }
 
-    @keyframes slideDown {
-        from { opacity: 0; transform: translateY(-4px); }
-        to   { opacity: 1; transform: translateY(0); }
-    }
-
-    /* ---- Badge "RACIOCINIO" no topo do expander ---- */
     .think-badge {
         display: inline-flex; align-items: center; gap: 6px;
         padding: 4px 10px; margin-bottom: 8px;
@@ -730,9 +662,7 @@ st.markdown("""
         color: var(--accent) !important;
         letter-spacing: 0.1em; text-transform: uppercase;
     }
-    .think-badge svg { opacity: 0.9; }
 
-    /* ---- Acoes de mensagem ---- */
     .msg-actions {
         display: flex; gap: 14px; align-items: center;
         margin-top: 10px; opacity: 0;
@@ -749,7 +679,7 @@ st.markdown("""
     }
     .msg-action:hover { color: var(--accent) !important; }
 
-    /* ---- Form inline de edicao ---- */
+    /* EDIT FORM */
     [data-testid="stChatMessage"] [data-testid="stForm"] {
         background: var(--card) !important;
         border: 1px solid var(--accent) !important;
@@ -764,7 +694,7 @@ st.markdown("""
         background: var(--bg) !important;
     }
 
-    /* ---- Code blocks ---- */
+    /* CODE */
     [data-testid="stChatMessage"] [data-testid="stCode"],
     [data-testid="stChatMessage"] pre,
     .stCodeBlock pre {
@@ -781,9 +711,7 @@ st.markdown("""
         font-size: 13px !important; line-height: 1.65 !important;
     }
 
-    /* ============================================================
-       CURSOR de streaming
-       ============================================================ */
+    /* CURSOR */
     .cursor {
         display: inline-block;
         width: 7px; height: 1.05em;
@@ -812,10 +740,8 @@ st.markdown("""
         40% { transform: translateY(-4px); opacity: 1; }
     }
 
-    /* ============================================================
-       COMPOSER pill (fixo no fundo do container de chat)
-       ============================================================ */
-    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) {
+    /* COMPOSER */
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether..."]) {
         background: var(--card) !important;
         border: 1px solid var(--border) !important;
         border-radius: 24px !important;
@@ -824,16 +750,16 @@ st.markdown("""
         max-width: 800px;
         padding: 6px 8px !important;
     }
-    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) > div > [data-testid="stVerticalBlock"] {
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether..."]) > div > [data-testid="stVerticalBlock"] {
         gap: 0 !important;
     }
-    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stHorizontalBlock"] {
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether..."]) [data-testid="stHorizontalBlock"] {
         align-items: center !important; gap: 4px !important;
     }
-    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stTextInput"] > div {
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether..."]) [data-testid="stTextInput"] > div {
         border: none !important; background: transparent !important; box-shadow: none !important;
     }
-    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stTextInput"] input {
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether..."]) [data-testid="stTextInput"] input {
         background: transparent !important;
         border: none !important;
         color: #1f1e1c !important;
@@ -844,13 +770,13 @@ st.markdown("""
         height: 48px !important;
         box-shadow: none !important;
     }
-    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stTextInput"] input::placeholder {
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether..."]) [data-testid="stTextInput"] input::placeholder {
         color: var(--text-mute) !important;
         -webkit-text-fill-color: var(--text-mute) !important;
         opacity: 1 !important;
     }
 
-    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stPopover"] > button {
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether..."]) [data-testid="stPopover"] > button {
         width: 42px !important; height: 42px !important; min-width: 42px !important;
         padding: 0 !important; font-size: 0 !important; color: transparent !important;
         background-color: transparent !important;
@@ -862,11 +788,11 @@ st.markdown("""
         background-position: center !important;
         transition: background-color 0.15s ease !important;
     }
-    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stPopover"] > button:hover {
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether..."]) [data-testid="stPopover"] > button:hover {
         background-color: var(--panel) !important;
     }
 
-    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stFormSubmitButton"] button {
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether..."]) [data-testid="stFormSubmitButton"] button {
         background: var(--accent) !important;
         color: #ffffff !important;
         border: none !important;
@@ -879,7 +805,7 @@ st.markdown("""
         background-repeat: no-repeat !important;
         background-position: center !important;
     }
-    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) [data-testid="stFormSubmitButton"] button:hover {
+    [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether..."]) [data-testid="stFormSubmitButton"] button:hover {
         background-color: var(--accent-hover) !important;
         transform: translateY(-1px);
     }
@@ -919,9 +845,6 @@ st.markdown("""
     }
     .attach-chip a:hover { color: var(--accent) !important; }
 
-    /* ============================================================
-       STOP BUTTON
-       ============================================================ */
     .stop-wrap {
         display: flex; justify-content: center;
         margin: 8px auto 12px auto;
@@ -945,9 +868,7 @@ st.markdown("""
         background: rgba(201,100,66,.04);
     }
 
-    /* ============================================================
-       ESTADO VAZIO
-       ============================================================ */
+    /* EMPTY */
     .empty-hero {
         display: flex; flex-direction: column;
         align-items: center; justify-content: center;
@@ -977,9 +898,7 @@ st.markdown("""
         line-height: 1.6;
     }
 
-    /* ============================================================
-       HISTORICO / PROJETOS / SETTINGS
-       ============================================================ */
+    /* PAINEIS */
     .panel-title {
         font-family: 'Lora', Georgia, serif;
         font-size: 20px; font-weight: 500;
@@ -1036,9 +955,7 @@ st.markdown("""
         margin: 18px 0 10px 0;
     }
 
-    /* ============================================================
-       BOTOES GENERICOS
-       ============================================================ */
+    /* BOTOES GENERICOS */
     .stButton > button {
         background: var(--card) !important;
         color: var(--text-dim) !important;
@@ -1125,9 +1042,7 @@ st.markdown("""
     ::-webkit-scrollbar-thumb { background: #d9d5c8; border-radius: 4px; }
     ::-webkit-scrollbar-thumb:hover { background: #c9c4b3; }
 
-    /* ============================================================
-       MOBILE
-       ============================================================ */
+    /* MOBILE */
     [data-testid="stSidebarNav"] { display: none !important; }
 
     @media (max-width: 900px) {
@@ -1212,7 +1127,7 @@ with st.sidebar:
         <div class="sb-brand-mark">A</div>
         <div class="sb-brand-info">
             <div class="sb-brand-name">Aether</div>
-            <div class="sb-brand-tag">Workspace</div>
+            <div class="sb-brand-tag">Chat</div>
         </div>
     </div>
 
@@ -1254,8 +1169,8 @@ st.markdown("""
 <div class="app-header">
     <div class="app-header-left">
         <div class="app-brand-info">
-            <div class="app-brand-name">Aether Engine</div>
-            <div class="app-brand-tag">Espaco de trabalho conversacional</div>
+            <div class="app-brand-name">Aether</div>
+            <div class="app-brand-tag">Assistente conversacional</div>
         </div>
     </div>
     <div class="app-status">
@@ -1298,43 +1213,41 @@ def _render_settings_panel():
         unsafe_allow_html=True,
     )
     st.markdown('<div class="panel-title">Configuracoes</div>', unsafe_allow_html=True)
-    with st.container():
+    st.markdown(
+        '<div class="settings-hint" style="max-width:800px;margin:0 auto 12px auto;">'
+        'Escreva como voce quer que o Aether responda (tom, girias, '
+        'regras fixas). Isso e enviado junto de toda mensagem, como '
+        'uma memoria persistente da conversa.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    with st.form("settings_form", clear_on_submit=False):
+        custom = st.text_area(
+            "Personalizacao",
+            value=st.session_state.custom_instructions,
+            placeholder="Ex: seja informal, use girias brasileiras, va direto ao ponto...",
+            height=140,
+            label_visibility="collapsed",
+        )
         st.markdown(
-            '<div class="settings-hint" style="max-width:800px;margin:0 auto 12px auto;">'
-            'Escreva como voce quer que o Aether responda (tom, girias, '
-            'regras fixas). Isso e enviado junto de toda mensagem, como '
-            'uma memoria persistente da conversa.'
-            '</div>',
+            '<div class="settings-section">Geracao</div>',
             unsafe_allow_html=True,
         )
-        with st.form("settings_form", clear_on_submit=False):
-            custom = st.text_area(
-                "Personalizacao",
-                value=st.session_state.custom_instructions,
-                placeholder="Ex: sempre responda na zueira, com girias brasileiras, "
-                            "sem formalidade, pode usar emoji...",
-                height=140,
-                label_visibility="collapsed",
-            )
-            st.markdown(
-                '<div class="settings-section">Geracao</div>',
-                unsafe_allow_html=True,
-            )
-            temp = st.slider(
-                "Criatividade (temperature)",
-                0.0, 2.0, float(st.session_state.temperature), 0.05,
-            )
-            topp = st.slider(
-                "Top P", 0.0, 1.0, float(st.session_state.top_p), 0.05,
-            )
-            saved = st.form_submit_button(
-                "Salvar configuracoes", use_container_width=True,
-            )
-            if saved:
-                st.session_state.custom_instructions = custom.strip()
-                st.session_state.temperature = temp
-                st.session_state.top_p = topp
-                st.toast("Configuracoes salvas", icon=":material/check_circle:")
+        temp = st.slider(
+            "Criatividade (temperature)",
+            0.0, 2.0, float(st.session_state.temperature), 0.05,
+        )
+        topp = st.slider(
+            "Top P", 0.0, 1.0, float(st.session_state.top_p), 0.05,
+        )
+        saved = st.form_submit_button(
+            "Salvar configuracoes", use_container_width=True,
+        )
+        if saved:
+            st.session_state.custom_instructions = custom.strip()
+            st.session_state.temperature = temp
+            st.session_state.top_p = topp
+            st.toast("Configuracoes salvas", icon=":material/check_circle:")
 
 
 def _render_history_panel():
@@ -1435,14 +1348,14 @@ if _prompt:
 _query = (st.session_state.search_query or "").strip().lower()
 
 
-# ---- Render das mensagens ----
+# ---- Mensagens ----
 if not st.session_state.messages:
     st.markdown("""
     <div class="empty-hero">
         <div class="empty-hero-mark">A</div>
         <div class="empty-hero-title">Como posso ajudar hoje?</div>
         <div class="empty-hero-sub">
-            Pergunte qualquer coisa, peca codigo, analise, ideias.<br>
+            Pergunte qualquer coisa, bata um papo, peca uma ideia ou codigo.<br>
             O raciocinio do modelo aparece em tempo real durante a resposta.
         </div>
     </div>
@@ -1535,8 +1448,7 @@ if _prompt:
 
         thinking_slot = st.expander("Raciocinio do modelo", expanded=True)
         with thinking_slot:
-            thinking_badge = st.empty()
-            thinking_badge.markdown(
+            st.markdown(
                 f'<div class="think-badge">{ICON_BRAIN}<span>Aether pensou</span></div>',
                 unsafe_allow_html=True,
             )
@@ -1584,43 +1496,23 @@ if _prompt:
 
                 if delta.content:
                     raw_buffer += delta.content
-
-                    partial_visible, partial_think = extract_thinking(raw_buffer)
-                    partial_visible = strip_artifacts(partial_visible)
-                    partial_visible = _strip_dangling(partial_visible)
-
-                    combined = "\n\n".join(
-                        filter(None, [reasoning_accum, partial_think])
+                    text_body.markdown(
+                        raw_buffer + '<span class="cursor"></span>',
+                        unsafe_allow_html=True,
                     )
-                    if combined:
-                        thinking_body.markdown(
-                            combined + '<span class="cursor"></span>',
-                            unsafe_allow_html=True,
-                        )
-                    if partial_visible:
-                        text_body.markdown(
-                            partial_visible + '<span class="cursor"></span>',
-                            unsafe_allow_html=True,
-                        )
 
             stop_holder.empty()
 
-            parsed = parse_response(raw_buffer)
-            final_thinking = "\n\n".join(
-                filter(None, [reasoning_accum, parsed["thinking"]])
-            )
+            if not reasoning_accum:
+                with thinking_slot:
+                    thinking_body.markdown("_Sem raciocinio exposto._")
 
-            if final_thinking:
-                thinking_body.markdown(final_thinking)
-            else:
-                thinking_body.markdown("_Sem raciocinio exposto._")
-
-            text_body.markdown(parsed["text"] or "_Sem resposta._")
+            text_body.markdown(raw_buffer or "_Sem resposta._")
 
             st.session_state.messages.append({
                 "role":     "assistant",
-                "content":  parsed["text"],
-                "thinking": final_thinking,
+                "content":  raw_buffer,
+                "thinking": reasoning_accum,
             })
             salvar_historico_no_disco()
 
@@ -1639,7 +1531,7 @@ if _prompt:
     _do_rerun = True
 
 
-# ---- Anexo chip ----
+# ---- Anexo ----
 if st.session_state.attached_name:
     st.markdown(
         f'<div class="attach-chip">'
@@ -1677,7 +1569,7 @@ with st.form("composer", clear_on_submit=True):
     with c2:
         user_msg = st.text_input(
             "mensagem",
-            placeholder="Envie uma mensagem para o Aether Engine...",
+            placeholder="Envie uma mensagem para o Aether...",
             label_visibility="collapsed",
         )
     with c3:
