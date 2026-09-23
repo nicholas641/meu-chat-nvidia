@@ -9,7 +9,7 @@ Preview com file tree + raciocinio da IA (estilo "Arena").
 import os
 import re
 import urllib.parse
-import pickle  # Adicionado para salvar as configurações
+import pickle
 from datetime import datetime
 import uuid
 
@@ -17,10 +17,18 @@ import streamlit as st
 import streamlit.components.v1 as components
 from openai import OpenAI
 
-# Funções automáticas de persistência de dados
+
+# ============================================================
+# PERSISTENCIA SIMPLES (best-effort)
+# ============================================================
 def salvar_historico_no_disco():
-    with open("backup_chat.pkl", "wb") as f:
-        pickle.dump(st.session_state.messages, f)
+    """Salva as mensagens em disco. Silencioso se o FS for read-only."""
+    try:
+        with open("backup_chat.pkl", "wb") as f:
+            pickle.dump(st.session_state.messages, f)
+    except Exception:
+        pass
+
 
 def carregar_historico_do_disco():
     if os.path.exists("backup_chat.pkl"):
@@ -30,7 +38,6 @@ def carregar_historico_do_disco():
         except Exception:
             return []
     return []
-
 
 
 # ============================================================
@@ -105,7 +112,7 @@ ICON_ARROWL  = _svg('<path d="M19 12H5M12 19l-7-7 7-7"/>', 15)
 
 
 # ============================================================
-# SYSTEM PROMPT (base + personalizacao definida pelo usuario)
+# SYSTEM PROMPT
 # ============================================================
 BASE_SYSTEM_PROMPT = """You are Aether Engine, a professional technical assistant.
 
@@ -164,24 +171,31 @@ st.set_page_config(
 
 
 # ============================================================
-# SESSION STATE
+# SESSION STATE  (BUG 1 FIX: todas as chaves agora estao aqui)
 # ============================================================
 _DEFAULTS = {
-    "messages":         carregar_historico_do_disco(),  # Agora carrega do arquivo salvo!
-    "current_artifact": None,
-    "artifact_lang":    None,
-    "pending_prompt":   None,
-    "temperature":      1.0,
-    "top_p":            0.95,
-    "max_tokens":       8192,
-    "attached_name":    None,
-    "attached_text":    None,
-    "editing_idx":          None,  # indice de mensagem sendo editada
+    "messages":             carregar_historico_do_disco(),
+    "current_artifact":     None,
+    "artifact_lang":        None,
+    "artifact_versions":    [],
+    "artifact_version_idx": -1,
+    "artifact_edit_mode":   False,
+    "current_files":        {},
+    "current_thinking":     "",
+    "preview_view":         "preview",
+    "selected_file":        None,
+    "pending_prompt":       None,
+    "temperature":          1.0,
+    "top_p":                0.95,
+    "max_tokens":           8192,
+    "attached_name":        None,
+    "attached_text":        None,
+    "editing_idx":          None,
     "stop_requested":       False,
     "search_query":         "",
     "refresh_counter":      0,
-    "custom_instructions":  "",   # personalizacao/memoria definida pelo usuario
-    "conversations":        [],   # historico/projetos salvos
+    "custom_instructions":  "",
+    "conversations":        [],
     "show_history":         False,
     "show_projects":        False,
     "show_settings":        False,
@@ -192,7 +206,7 @@ for k, v in _DEFAULTS.items():
 
 
 # ============================================================
-# HELPERS DE CONVERSA (usados pelo router)
+# HELPERS DE CONVERSA
 # ============================================================
 def _reset_conversation():
     st.session_state.messages = []
@@ -215,7 +229,6 @@ def _close_panels():
 
 
 def _snapshot_conversation(pinned: bool = False, title: str = None):
-    """Salva a conversa atual (se tiver mensagens) na lista de conversas."""
     if not st.session_state.messages:
         return
     if title is None:
@@ -228,7 +241,7 @@ def _snapshot_conversation(pinned: bool = False, title: str = None):
         "id":                   str(uuid.uuid4())[:8],
         "title":                title or "Conversa sem titulo",
         "ts":                   datetime.now().strftime("%d/%m %H:%M"),
-                "messages":             st.session_state.messages,
+        "messages":             st.session_state.messages,
         "artifact_versions":    st.session_state.get("artifact_versions", []),
         "artifact_version_idx": st.session_state.get("artifact_version_idx", -1),
         "current_artifact":     st.session_state.get("current_artifact", None),
@@ -240,18 +253,19 @@ def _snapshot_conversation(pinned: bool = False, title: str = None):
 
 
 def _load_conversation(conv_id: str) -> bool:
+    """BUG 6 FIX: usa .get() para tolerar conversas antigas sem as chaves novas."""
     for c in st.session_state.conversations:
         if c["id"] == conv_id:
-            st.session_state.messages             = c["messages"]
-            st.session_state.artifact_versions     = c["artifact_versions"]
-            st.session_state.artifact_version_idx  = c["artifact_version_idx"]
-            st.session_state.current_artifact      = c["current_artifact"]
-            st.session_state.current_files         = c.get("current_files", {})
-            st.session_state.current_thinking      = c.get("current_thinking", "")
-            st.session_state.artifact_lang         = c["artifact_lang"]
-            st.session_state.artifact_edit_mode    = False
-            st.session_state.preview_view          = "preview"
-            st.session_state.editing_idx           = None
+            st.session_state.messages            = c.get("messages", [])
+            st.session_state.artifact_versions    = c.get("artifact_versions", [])
+            st.session_state.artifact_version_idx = c.get("artifact_version_idx", -1)
+            st.session_state.current_artifact     = c.get("current_artifact", None)
+            st.session_state.current_files        = c.get("current_files", {})
+            st.session_state.current_thinking     = c.get("current_thinking", "")
+            st.session_state.artifact_lang        = c.get("artifact_lang", None)
+            st.session_state.artifact_edit_mode   = False
+            st.session_state.preview_view         = "preview"
+            st.session_state.editing_idx          = None
             return True
     return False
 
@@ -271,8 +285,6 @@ if _action:
         st.toast("Nova conversa iniciada", icon=":material/check_circle:")
 
     elif _action == "refresh":
-        # Contador injetado no HTML do preview para forcar o navegador a
-        # remontar o iframe de verdade (JS/timers/estado reiniciam).
         st.session_state.refresh_counter += 1
         st.toast("Preview atualizado", icon=":material/refresh:")
 
@@ -334,11 +346,38 @@ if _action:
         st.session_state.messages = []
         st.session_state.current_artifact = None
         if os.path.exists("backup_chat.pkl"):
-            os.remove("backup_chat.pkl")
+            try:
+                os.remove("backup_chat.pkl")
+            except Exception:
+                pass
         st.rerun()
 
+    # ---- BUG 3 FIX: handler de stop_generation ----
+    elif _action == "stop_generation":
+        st.session_state.stop_requested = True
 
-    # ---- Navegacao de versoes do artifact ----
+    # ---- BUG 4 FIX: handler de cancel_edit (usado pelo atalho Esc) ----
+    elif _action == "cancel_edit":
+        st.session_state.editing_idx = None
+
+    # ---- Edicao de mensagem ----
+    elif _action == "edit" and _idx_qp is not None:
+        try:
+            st.session_state.editing_idx = int(_idx_qp)
+        except ValueError:
+            st.session_state.editing_idx = None
+
+    # ---- Regenerar ----
+    elif _action == "regen":
+        msgs = st.session_state.messages
+        if msgs and msgs[-1]["role"] == "assistant":
+            msgs.pop()
+        if msgs and msgs[-1]["role"] == "user":
+            last_user = msgs.pop()
+            st.session_state.pending_prompt = last_user["content"]
+        st.rerun()
+
+    # ---- Navegacao de versoes ----
     elif _action == "artifact_prev":
         if st.session_state.artifact_versions:
             i = st.session_state.artifact_version_idx - 1
@@ -367,14 +406,12 @@ if _action:
             st.session_state.artifact_edit_mode = False
             st.session_state.selected_file = None
 
-    # ---- Modo edicao do artifact ----
     elif _action == "toggle_artifact_edit":
         st.session_state.artifact_edit_mode = not st.session_state.artifact_edit_mode
 
     elif _action == "cancel_artifact_edit":
         st.session_state.artifact_edit_mode = False
 
-    # ---- Alternar visualizacao do preview ----
     elif _action == "view_preview":
         st.session_state.preview_view = "preview"
 
@@ -413,7 +450,6 @@ def _detect_lang(code: str) -> str:
 
 
 def extract_artifact(text: str):
-    """Retorna (texto_visivel, codigo_bruto_do_artifact, lang)."""
     m = _ARTIFACT_RE.search(text)
     if m:
         code = m.group(1).strip()
@@ -440,8 +476,6 @@ def extract_artifact(text: str):
 
 
 def _parse_files(artifact_raw: str) -> dict:
-    """Extrai multiplos arquivos de dentro do artifact (blocos <file>).
-    Se nao houver nenhum, trata o conteudo inteiro como index.html."""
     files = {}
     for m in _FILE_RE.finditer(artifact_raw or ""):
         fname = m.group(1).strip()
@@ -454,7 +488,6 @@ def _parse_files(artifact_raw: str) -> dict:
 
 
 def _build_preview_html(files: dict) -> str:
-    """Combina os arquivos (html/css/js) em um unico documento renderizavel."""
     html = files.get("index.html") or next(iter(files.values()), "")
 
     css_parts = [
@@ -484,9 +517,6 @@ def _build_preview_html(files: dict) -> str:
 
 
 def _maybe_strip_emojis(text: str) -> str:
-    """So remove emojis no modo padrao; se ha personalizacao definida
-    pelo usuario (ex: 'sempre responda na zueira'), deixa o texto como
-    o modelo escreveu, ja que emojis costumam fazer parte desse tom."""
     if (st.session_state.get("custom_instructions") or "").strip():
         return text or ""
     if not text:
@@ -612,11 +642,6 @@ st.markdown("""
         max-width: 100% !important;
     }
 
-    /* ---------- FIX: texto do chat aparecendo branco ----------
-       O streaming escreve via st.empty().markdown(...) e, dependendo do
-       tema do navegador/SO, o Streamlit podia herdar cor de texto clara
-       (branco) por baixo dos seletores mais especificos abaixo. Forcamos
-       a cor em QUALQUER markdown renderizado no app, nao so no chat. */
     .stMarkdown, .stMarkdown p, .stMarkdown li, .stMarkdown span,
     .stMarkdown div, .stMarkdown strong, .stMarkdown em, .stMarkdown a,
     .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown h4,
@@ -629,7 +654,6 @@ st.markdown("""
         background: var(--bg-code) !important;
     }
 
-    /* ---------- ALTURA FIXA DOS PAINEIS (610px) ---------- */
     [data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="stVerticalBlock"]),
     [data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stVerticalBlock"]) {
         height: var(--panel-h) !important;
@@ -642,7 +666,6 @@ st.markdown("""
         overflow-y: auto !important;
     }
 
-    /* ---------- SIDEBAR ---------- */
     section[data-testid="stSidebar"] {
         width: 220px !important;
         min-width: 220px !important;
@@ -670,22 +693,17 @@ st.markdown("""
     }
 
     .sb-brand {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 4px 2px 14px 2px;
-        margin-bottom: 6px;
+        display: flex; align-items: center; gap: 10px;
+        padding: 4px 2px 14px 2px; margin-bottom: 6px;
         border-bottom: 1px solid var(--border-soft);
     }
     .sb-brand-mark {
         width: 32px; height: 32px;
-        background: var(--accent);
-        color: #ffffff;
+        background: var(--accent); color: #ffffff;
         border-radius: var(--radius-md);
         display: flex; align-items: center; justify-content: center;
         font-family: Georgia, "Times New Roman", serif;
-        font-size: 17px; font-weight: 500;
-        flex-shrink: 0;
+        font-size: 17px; font-weight: 500; flex-shrink: 0;
         box-shadow: 0 2px 6px rgba(201,100,66,.22);
     }
     .sb-brand-info { display: flex; flex-direction: column; line-height: 1.15; }
@@ -694,14 +712,12 @@ st.markdown("""
 
     .sb-section {
         font-size: 10px; font-weight: 600;
-        color: var(--text-mute);
-        letter-spacing: 0.09em; text-transform: uppercase;
-        padding: 14px 8px 6px 8px;
+        color: var(--text-mute); letter-spacing: 0.09em;
+        text-transform: uppercase; padding: 14px 8px 6px 8px;
     }
 
     .sb-btn {
-        display: flex !important;
-        align-items: center; gap: 10px;
+        display: flex !important; align-items: center; gap: 10px;
         padding: 8px 10px; margin: 1px 0;
         border-radius: var(--radius-sm);
         color: var(--text-dim) !important;
@@ -717,10 +733,8 @@ st.markdown("""
     .sb-btn.active { background: var(--panel); color: var(--accent) !important; }
 
     .sb-btn-primary {
-        background: var(--accent);
-        color: #ffffff !important;
-        box-shadow: 0 1px 3px rgba(201,100,66,.25);
-        margin-bottom: 4px;
+        background: var(--accent); color: #ffffff !important;
+        box-shadow: 0 1px 3px rgba(201,100,66,.25); margin-bottom: 4px;
     }
     .sb-btn-primary:hover { background: var(--accent-hover); color: #ffffff !important; }
     .sb-btn-primary svg { opacity: 1; }
@@ -743,15 +757,12 @@ st.markdown("""
         opacity: 1 !important;
     }
 
-    /* ---------- APP HEADER ---------- */
     .app-header {
         display: flex; align-items: center; justify-content: space-between;
-        padding: 12px 20px;
-        background: var(--card);
+        padding: 12px 20px; background: var(--card);
         border: 1px solid var(--border);
         border-radius: var(--radius-md);
-        margin-bottom: 10px;
-        box-shadow: var(--shadow-sm);
+        margin-bottom: 10px; box-shadow: var(--shadow-sm);
     }
     .app-header-left { display: flex; align-items: center; gap: 12px; }
     .app-brand-mark {
@@ -761,34 +772,29 @@ st.markdown("""
         display: flex; align-items: center; justify-content: center;
         font-family: Georgia, "Times New Roman", serif;
         font-size: 18px; font-weight: 500;
-        box-shadow: 0 2px 6px rgba(201,100,66,.22);
-        flex-shrink: 0;
+        box-shadow: 0 2px 6px rgba(201,100,66,.22); flex-shrink: 0;
     }
     .app-brand-info { line-height: 1.15; }
     .app-brand-name { font-size: 15px; font-weight: 600; color: var(--text); letter-spacing: -0.015em; }
     .app-brand-tag  { font-size: 11.5px; color: var(--text-mute); margin-top: 1px; }
     .app-status {
         display: inline-flex; align-items: center; gap: 7px;
-        padding: 6px 12px;
-        background: var(--panel);
+        padding: 6px 12px; background: var(--panel);
         border: 1px solid var(--border-soft);
-        border-radius: 999px;
-        font-size: 12px; font-weight: 500;
+        border-radius: 999px; font-size: 12px; font-weight: 500;
         color: var(--text-dim);
     }
     .app-status-dot {
         width: 7px; height: 7px; border-radius: 50%;
-        background: #6ba944;
-        box-shadow: 0 0 0 3px rgba(107,169,68,.15);
+        background: #6ba944; box-shadow: 0 0 0 3px rgba(107,169,68,.15);
     }
 
-    /* ---------- PANEL LABELS ---------- */
     .panel-label {
         display: flex; align-items: center; justify-content: space-between;
         padding: 2px 4px 8px 4px;
         font-size: 11px; font-weight: 600;
-        color: var(--text-mute);
-        letter-spacing: 0.1em; text-transform: uppercase;
+        color: var(--text-mute); letter-spacing: 0.1em;
+        text-transform: uppercase;
     }
     .panel-label-title { display: flex; align-items: center; gap: 8px; }
     .panel-label-tools { display: flex; gap: 3px; align-items: center; }
@@ -796,8 +802,7 @@ st.markdown("""
         width: 28px; height: 28px;
         display: flex; align-items: center; justify-content: center;
         color: var(--text-mute) !important;
-        border-radius: 6px;
-        text-decoration: none !important;
+        border-radius: 6px; text-decoration: none !important;
         cursor: pointer;
         transition: background-color 0.15s ease, color 0.15s ease;
     }
@@ -806,42 +811,33 @@ st.markdown("""
 
     .version-nav {
         display: inline-flex; align-items: center; gap: 2px;
-        background: var(--panel);
-        border: 1px solid var(--border-soft);
-        border-radius: var(--radius-sm);
-        padding: 2px;
-        font-size: 11.5px;
-        color: var(--text-dim);
+        background: var(--panel); border: 1px solid var(--border-soft);
+        border-radius: var(--radius-sm); padding: 2px;
+        font-size: 11.5px; color: var(--text-dim);
     }
     .version-nav a {
         width: 22px; height: 22px;
         display: inline-flex; align-items: center; justify-content: center;
         color: var(--text-dim) !important;
-        text-decoration: none !important;
-        border-radius: 4px;
+        text-decoration: none !important; border-radius: 4px;
         transition: background-color 0.15s ease, color 0.15s ease;
     }
     .version-nav a:hover { background: var(--card); color: var(--accent) !important; }
     .version-nav span {
-        padding: 0 8px;
-        font-variant-numeric: tabular-nums;
-        font-size: 11.5px;
-        color: var(--text-dim) !important;
+        padding: 0 8px; font-variant-numeric: tabular-nums;
+        font-size: 11.5px; color: var(--text-dim) !important;
     }
 
-    /* ---------- DOWNLOAD / ACTION BUTTONS ---------- */
     [data-testid="stDownloadButton"] { margin: 0 !important; padding: 0 !important; }
     [data-testid="stDownloadButton"] > button {
         background: var(--card) !important;
         color: var(--text-dim) !important;
         border: 1px solid var(--border) !important;
         border-radius: var(--radius-sm) !important;
-        font-size: 12px !important;
-        font-weight: 500 !important;
+        font-size: 12px !important; font-weight: 500 !important;
         height: 28px !important; min-height: 28px !important;
         padding: 0 10px 0 8px !important;
-        width: 100% !important;
-        box-shadow: none !important;
+        width: 100% !important; box-shadow: none !important;
         display: inline-flex !important;
         align-items: center !important; justify-content: center !important;
         gap: 6px !important; cursor: pointer !important;
@@ -858,7 +854,6 @@ st.markdown("""
         margin: 0 !important; white-space: nowrap !important;
     }
 
-    /* ---------- CHAT ---------- */
     [data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stVerticalBlock"]) {
         background: var(--card) !important;
         border: 1px solid var(--border) !important;
@@ -869,10 +864,8 @@ st.markdown("""
 
     [data-testid="stChatMessage"] {
         background: transparent !important;
-        border: none !important;
-        border-radius: 0 !important;
-        padding: 6px 0 !important;
-        margin-bottom: 8px !important;
+        border: none !important; border-radius: 0 !important;
+        padding: 6px 0 !important; margin-bottom: 8px !important;
         box-shadow: none !important;
         display: flex !important; flex-direction: row !important;
         align-items: flex-start !important; gap: 0 !important;
@@ -886,8 +879,7 @@ st.markdown("""
         max-width: 100% !important;
         padding: 0 !important;
         background: transparent !important;
-        border: none !important;
-        border-radius: 0 !important;
+        border: none !important; border-radius: 0 !important;
     }
 
     [data-testid="stChatMessage"]:has(img[src*="useravatar"]) {
@@ -899,17 +891,14 @@ st.markdown("""
         border: 1px solid var(--border-soft) !important;
         border-radius: var(--radius-lg) !important;
         padding: 12px 18px !important;
-        max-width: 82% !important;
-        flex: 0 1 auto !important;
+        max-width: 82% !important; flex: 0 1 auto !important;
     }
 
     [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) { margin-bottom: 16px !important; }
     [data-testid="stChatMessage"]:has(img[src*="aiavatar"]) [data-testid="stChatMessageContent"]::before {
-        content: "AETHER";
-        display: block;
+        content: "AETHER"; display: block;
         font-size: 10.5px; font-weight: 700;
-        color: var(--text-mute);
-        letter-spacing: 0.1em;
+        color: var(--text-mute); letter-spacing: 0.1em;
         margin-bottom: 8px;
     }
 
@@ -925,7 +914,6 @@ st.markdown("""
         to   { opacity: 1; transform: translateY(0); }
     }
 
-    /* ---- Acoes de mensagem (editar / regenerar) ---- */
     .msg-actions {
         display: flex; gap: 12px; align-items: center;
         margin-top: 6px; opacity: 0;
@@ -936,8 +924,7 @@ st.markdown("""
         font-size: 11.5px;
         color: var(--text-mute) !important;
         text-decoration: none !important;
-        cursor: pointer;
-        font-weight: 500;
+        cursor: pointer; font-weight: 500;
         display: inline-flex; align-items: center; gap: 4px;
         transition: color 0.15s ease;
     }
@@ -945,23 +932,19 @@ st.markdown("""
 
     .artifact-badge {
         display: inline-flex; align-items: center; gap: 6px;
-        padding: 4px 10px;
-        margin-top: 10px;
+        padding: 4px 10px; margin-top: 10px;
         background: rgba(201,100,66,.08);
         border: 1px solid rgba(201,100,66,.22);
         border-radius: 999px;
         font-size: 11px; font-weight: 600;
         color: var(--accent) !important;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
+        letter-spacing: 0.06em; text-transform: uppercase;
     }
     .artifact-badge::before {
-        content: "";
-        width: 6px; height: 6px; border-radius: 50%;
-        background: var(--accent);
+        content: ""; width: 6px; height: 6px;
+        border-radius: 50%; background: var(--accent);
     }
 
-    /* ---- Form inline de edicao ---- */
     [data-testid="stForm"] {
         background: var(--card) !important;
         border: 1px solid var(--border) !important;
@@ -970,16 +953,13 @@ st.markdown("""
     }
     [data-testid="stChatMessage"] [data-testid="stForm"] {
         border: 1px solid var(--accent) !important;
-        padding: 8px 10px !important;
-        margin-top: 6px !important;
+        padding: 8px 10px !important; margin-top: 6px !important;
     }
     [data-testid="stTextArea"] textarea {
-        font-size: 14px !important;
-        line-height: 1.55 !important;
+        font-size: 14px !important; line-height: 1.55 !important;
         border: 1px solid var(--border) !important;
         border-radius: var(--radius-sm) !important;
-        padding: 8px 10px !important;
-        background: var(--bg) !important;
+        padding: 8px 10px !important; background: var(--bg) !important;
     }
 
     [data-testid="stChatMessage"] [data-testid="stCode"],
@@ -1031,8 +1011,7 @@ st.markdown("""
     [data-testid="stChatMessage"] [data-testid="stExpander"] summary {
         padding: 2px 0 !important;
         color: var(--text-mute) !important;
-        list-style: none !important;
-        opacity: 0.8;
+        list-style: none !important; opacity: 0.8;
         transition: opacity 0.15s ease, color 0.15s ease;
     }
     [data-testid="stChatMessage"] [data-testid="stExpander"] summary:hover {
@@ -1060,11 +1039,6 @@ st.markdown("""
         line-height: 1.65; font-style: italic; opacity: 0.9;
     }
 
-    /* ---------- FORMS (config / editar / salvar projeto) ----------
-       Estilo padrao para botoes de submit de formularios que NAO sao o
-       composer (o composer e diferenciado abaixo via :has() no proprio
-       input, ja que um <div> criado com st.markdown nao consegue
-       "envolver" outros elementos do Streamlit no DOM). */
     [data-testid="stFormSubmitButton"] button {
         background: var(--card) !important;
         color: var(--text-dim) !important;
@@ -1081,11 +1055,9 @@ st.markdown("""
     }
     [data-testid="stFormSubmitButton"] button p { color: inherit !important; margin: 0 !important; }
 
-    /* ---------- COMPOSER (identificado pelo placeholder do input) ---------- */
     [data-testid="stForm"]:has(input[placeholder="Envie uma mensagem para o Aether Engine..."]) {
         box-shadow: 0 2px 8px rgba(0,0,0,.04);
-        margin-top: 4px;
-        padding: 6px 10px !important;
+        margin-top: 4px; padding: 6px 10px !important;
     }
     [data-testid="stForm"] > div > [data-testid="stVerticalBlock"] { gap: 0 !important; }
     [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
@@ -1181,11 +1153,7 @@ st.markdown("""
     }
     .attach-chip a:hover { color: var(--accent) !important; }
 
-    /* ---------- STOP BUTTON ---------- */
-    .stop-wrap {
-        display: flex; justify-content: center;
-        margin: 4px 0 8px 0;
-    }
+    .stop-wrap { display: flex; justify-content: center; margin: 4px 0 8px 0; }
     .stop-wrap a {
         display: inline-flex; align-items: center; gap: 6px;
         padding: 6px 12px;
@@ -1203,13 +1171,10 @@ st.markdown("""
         background: rgba(201,100,66,.04);
     }
 
-    /* ---------- PREVIEW ---------- */
     .preview-empty {
         display: flex; flex-direction: column;
         align-items: center; justify-content: center;
-        text-align: center;
-        padding: 40px 24px;
-        min-height: 480px;
+        text-align: center; padding: 40px 24px; min-height: 480px;
     }
     .preview-empty-icon {
         width: 78px; height: 78px;
@@ -1217,8 +1182,7 @@ st.markdown("""
         background: var(--panel);
         border: 1px solid var(--border-soft);
         border-radius: 50%;
-        color: var(--text-mute);
-        margin-bottom: 22px;
+        color: var(--text-mute); margin-bottom: 22px;
     }
     .preview-empty-title {
         font-size: 15.5px; font-weight: 600;
@@ -1238,8 +1202,7 @@ st.markdown("""
         border: 1px solid var(--border);
         border-radius: var(--radius-sm);
         font-size: 13px; font-weight: 500;
-        cursor: pointer;
-        text-decoration: none !important;
+        cursor: pointer; text-decoration: none !important;
         transition: border-color 0.15s ease, color 0.15s ease;
     }
     .preview-empty-btn:hover {
@@ -1265,7 +1228,6 @@ st.markdown("""
     }
     @keyframes blink { 50% { opacity: 0; } }
 
-    /* file tree do modo "codigo" */
     .file-row {
         display: flex; align-items: center; gap: 8px;
         padding: 7px 10px; border-radius: var(--radius-sm);
@@ -1274,10 +1236,10 @@ st.markdown("""
     }
     .file-row.active { background: var(--panel); color: var(--accent) !important; font-weight: 600; }
 
-    /* ---------- LISTAS (historico / projetos) ---------- */
     .hist-row {
         display: flex; align-items: center; justify-content: space-between;
-        padding: 10px 6px; border-bottom: 1px solid var(--border-soft);
+        padding: 10px 6px;
+        border-bottom: 1px solid var(--border-soft);
         gap: 8px;
     }
     .hist-row-main { flex: 1 1 auto; min-width: 0; text-decoration: none !important; }
@@ -1302,8 +1264,7 @@ st.markdown("""
         display: inline-flex; align-items: center; gap: 6px;
         font-size: 12.5px; font-weight: 500;
         color: var(--text-dim) !important;
-        text-decoration: none !important;
-        margin-bottom: 8px;
+        text-decoration: none !important; margin-bottom: 8px;
         transition: color 0.15s ease;
     }
     .panel-back:hover { color: var(--accent) !important; }
@@ -1317,7 +1278,6 @@ st.markdown("""
         margin: 16px 0 8px 0;
     }
 
-    /* ---------- GENERIC BUTTONS ---------- */
     .stButton > button {
         background: var(--card) !important;
         color: var(--text-dim) !important;
@@ -1386,7 +1346,6 @@ st.markdown("""
     ::-webkit-scrollbar-thumb { background: #dedbd3; border-radius: 4px; }
     ::-webkit-scrollbar-thumb:hover { background: #c9c6be; }
 
-    /* ---------- MENU MOBILE ---------- */
     [data-testid="stSidebarNav"] { display: none !important; }
 
     @media (max-width: 900px) {
@@ -1444,7 +1403,7 @@ st.markdown("""
 
 
 # ============================================================
-# ATALHO: ESC cancela edicao
+# ATALHO ESC: cancela edicao (agora o handler existe no router)
 # ============================================================
 components.html(
     """
@@ -1456,9 +1415,13 @@ components.html(
         doc.addEventListener('keydown', function (e) {
             if (e.key !== 'Escape') return;
             const url = new URL(window.parent.location.href);
-            if (url.searchParams.get('a') === 'edit') {
+            const a = url.searchParams.get('a');
+            if (a === 'edit') {
                 url.searchParams.set('a', 'cancel_edit');
                 url.searchParams.delete('i');
+                window.parent.location.href = url.toString();
+            } else if (a === 'toggle_artifact_edit') {
+                url.searchParams.set('a', 'cancel_artifact_edit');
                 window.parent.location.href = url.toString();
             }
         });
@@ -1508,13 +1471,14 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     st.markdown('<div class="sb-section">Busca</div>', unsafe_allow_html=True)
-    st.session_state.search_query = st.text_input(
+    # BUG 6b FIX: usa apenas a key do widget, evita conflito com value=
+    _search_input = st.text_input(
         "Buscar na conversa",
-        value=st.session_state.search_query,
         placeholder="Filtrar mensagens...",
         label_visibility="collapsed",
         key="sidebar_search",
     )
+    st.session_state.search_query = _search_input or ""
 
 
 # ============================================================
@@ -1539,11 +1503,10 @@ st.markdown("""
 
 # ============================================================
 # PAINEIS: HISTORICO / PROJETOS / CONFIGURACOES
-# (renderizados dentro da coluna do chat, no lugar da conversa)
 # ============================================================
 def _hist_row_html(c: dict, show_pin: bool = True) -> str:
-    pin_cls = "hist-action pinned" if c["pinned"] else "hist-action"
-    pin_title = "Remover dos projetos" if c["pinned"] else "Salvar como projeto"
+    pin_cls = "hist-action pinned" if c.get("pinned") else "hist-action"
+    pin_title = "Remover dos projetos" if c.get("pinned") else "Salvar como projeto"
     pin_html = (
         f'<a class="{pin_cls}" href="?a=toggle_pin_conv&i={c["id"]}" '
         f'target="_self" title="{pin_title}">{ICON_STAR}</a>'
@@ -1553,7 +1516,7 @@ def _hist_row_html(c: dict, show_pin: bool = True) -> str:
     <div class="hist-row">
         <a class="hist-row-main" href="?a=load_conv&i={c['id']}" target="_self">
             <div class="hist-title">{c['title']}</div>
-            <div class="hist-meta">{c['ts']} · {len(c['messages'])} mensagens</div>
+            <div class="hist-meta">{c['ts']} · {len(c.get('messages', []))} mensagens</div>
         </a>
         <div class="hist-actions">
             {pin_html}
@@ -1657,7 +1620,7 @@ def _render_projects_panel():
                     st.toast("Projeto salvo", icon=":material/bookmark:")
             st.markdown('<div style="height:8px;"></div>', unsafe_allow_html=True)
 
-        pinned = [c for c in st.session_state.conversations if c["pinned"]]
+        pinned = [c for c in st.session_state.conversations if c.get("pinned")]
         if not pinned:
             st.markdown(
                 '<div class="panel-empty">Nenhum projeto salvo ainda.<br>'
@@ -1680,11 +1643,6 @@ col_chat, col_preview = st.columns([1, 1.15], gap="medium")
 # CHAT
 # ------------------------------------------------------------
 _do_rerun = False
-_panel_active = (
-    st.session_state.show_settings
-    or st.session_state.show_history
-    or st.session_state.show_projects
-)
 
 with col_chat:
 
@@ -1702,6 +1660,8 @@ with col_chat:
     _prompt = st.session_state.pending_prompt
     st.session_state.pending_prompt = None
 
+    # BUG 2 FIX: o append da mensagem do usuario acontece SEMPRE,
+    # nao somente quando ha arquivo anexado.
     if _prompt:
         if st.session_state.attached_text:
             _prompt = (
@@ -1709,9 +1669,8 @@ with col_chat:
                 f"[Arquivo anexado: {st.session_state.attached_name}]\n"
                 f"```\n{st.session_state.attached_text[:4000]}\n```"
             )
-            st.session_state.messages.append({"role": "user", "content": _prompt})
-        salvar_historico_no_disco()  # Salva a mensagem do usuário imediatamente
-
+        st.session_state.messages.append({"role": "user", "content": _prompt})
+        salvar_historico_no_disco()
 
     if st.session_state.show_settings:
         _render_settings_panel()
@@ -1956,7 +1915,6 @@ with col_chat:
                         })
                         salvar_historico_no_disco()
 
-
                 st.session_state.stop_requested = False
                 st.session_state.attached_name = None
                 st.session_state.attached_text = None
@@ -1978,260 +1936,3 @@ with col_chat:
                 vertical_alignment="center",
             )
             with c1:
-                with st.popover("Anexar", use_container_width=False):
-                    uploaded = st.file_uploader(
-                        "Anexar arquivo",
-                        type=["txt", "md", "py", "js", "html", "css", "json"],
-                        label_visibility="collapsed",
-                    )
-                    if uploaded is not None:
-                        try:
-                            st.session_state.attached_name = uploaded.name
-                            st.session_state.attached_text = uploaded.read().decode(
-                                "utf-8", errors="ignore"
-                            )
-                            st.success(f"Anexado: {uploaded.name}")
-                        except Exception as e:
-                            st.error(f"Erro ao ler arquivo: {e}")
-
-            with c2:
-                user_msg = st.text_input(
-                    "mensagem",
-                    placeholder="Envie uma mensagem para o Aether Engine...",
-                    label_visibility="collapsed",
-                )
-            with c3:
-                st.markdown(
-                    f'<a class="composer-mic" href="?a=mic" target="_self" '
-                    f'title="Gravar audio">{ICON_MIC}</a>',
-                    unsafe_allow_html=True,
-                )
-            with c4:
-                submitted = st.form_submit_button("Enviar")
-
-        if submitted and user_msg.strip():
-            st.session_state.pending_prompt = user_msg.strip()
-            st.rerun()
-
-
-# ------------------------------------------------------------
-# PREVIEW
-# ------------------------------------------------------------
-with col_preview:
-
-    has_art = bool(st.session_state.current_artifact)
-    total_v = len(st.session_state.get("artifact_versions", []))
-    cur_v   = st.session_state.get("artifact_version_idx", -1) + 1 if total_v else 0
-    files_dict = st.session_state.get("current_files", {}) or {}
-    is_multi_file = len(files_dict) > 1
-
-    hdr_l, hdr_toggle, hdr_v, hdr_t, hdr_e, hdr_r = st.columns(
-        [2.2, 0.55, 1.35, 0.55, 0.55, 1.6],
-        gap="small",
-        vertical_alignment="center",
-    )
-
-    with hdr_l:
-        st.markdown(
-            '<div class="panel-label" style="padding:0;margin:0;">'
-            '<span class="panel-label-title">Preview</span></div>',
-            unsafe_allow_html=True,
-        )
-
-    with hdr_toggle:
-        if has_art:
-            if st.session_state.preview_view == "preview":
-                st.markdown(
-                    f'<a class="panel-tool" href="?a=view_code" target="_self" '
-                    f'title="Ver codigo">{ICON_CODE}</a>',
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.markdown(
-                    f'<a class="panel-tool" href="?a=view_preview" target="_self" '
-                    f'title="Ver preview">{ICON_EYE}</a>',
-                    unsafe_allow_html=True,
-                )
-
-    with hdr_v:
-        if has_art and total_v > 0:
-            st.markdown(
-                f'<div class="version-nav">'
-                f'<a href="?a=artifact_prev" target="_self" title="Versao anterior">{ICON_BACK}</a>'
-                f'<span>{cur_v}/{total_v}</span>'
-                f'<a href="?a=artifact_next" target="_self" title="Proxima versao">{ICON_NEXT}</a>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-
-    with hdr_t:
-        st.markdown(
-            f'<a class="panel-tool" href="?a=refresh" target="_self" '
-            f'title="Atualizar">{ICON_REFRESH}</a>',
-            unsafe_allow_html=True,
-        )
-
-    with hdr_e:
-        if has_art and st.session_state.preview_view == "preview":
-            tool_href = (
-                "?a=cancel_artifact_edit"
-                if st.session_state.artifact_edit_mode
-                else "?a=toggle_artifact_edit"
-            )
-            tool_title = (
-                "Fechar edicao" if st.session_state.artifact_edit_mode
-                else "Editar codigo"
-            )
-            st.markdown(
-                f'<a class="panel-tool" href="{tool_href}" target="_self" '
-                f'title="{tool_title}">{ICON_EDIT}</a>',
-                unsafe_allow_html=True,
-            )
-
-    with hdr_r:
-        if has_art:
-            st.download_button(
-                label="Baixar HTML",
-                data=st.session_state.current_artifact,
-                file_name=_download_filename(),
-                mime="text/html",
-                use_container_width=True,
-                key="dl_artifact",
-            )
-
-    preview_box = st.container(height=PANEL_HEIGHT)
-
-    with preview_box:
-        if not has_art:
-            st.markdown(f"""
-            <div class="preview-empty">
-                <div class="preview-empty-icon">{ICON_IMAGE}</div>
-                <div class="preview-empty-title">Seu preview aparecera aqui</div>
-                <div class="preview-empty-text">
-                    Peca ao Aether para gerar uma interface ou componente visual.
-                </div>
-                <a class="preview-empty-btn" href="?a=example" target="_self">
-                    Ver exemplo
-                </a>
-            </div>
-            """, unsafe_allow_html=True)
-
-        else:
-            # ---- Painel "o que a IA esta fazendo" (estilo Arena) ----
-            if st.session_state.current_thinking or is_multi_file:
-                with st.expander("Raciocinio da IA", expanded=False):
-                    if st.session_state.current_thinking:
-                        st.markdown(st.session_state.current_thinking)
-                    if files_dict:
-                        _names = ", ".join(f"`{n}`" for n in files_dict.keys())
-                        st.markdown(f"**Arquivos gerados:** {_names}")
-
-            if st.session_state.preview_view == "code":
-                # ---- Modo Codigo: arvore de arquivos + visualizador ----
-                file_names = list(files_dict.keys())
-                if (
-                    st.session_state.selected_file not in file_names
-                    and file_names
-                ):
-                    st.session_state.selected_file = file_names[0]
-
-                f_col1, f_col2 = st.columns([1, 2.4], gap="small")
-                with f_col1:
-                    st.markdown(
-                        '<div style="font-size:11px;font-weight:600;'
-                        'color:var(--text-mute);letter-spacing:.08em;'
-                        'text-transform:uppercase;margin-bottom:8px;">'
-                        'Arquivos</div>',
-                        unsafe_allow_html=True,
-                    )
-                    for fname in file_names:
-                        if st.button(
-                            fname,
-                            key=f"filebtn_{fname}_{st.session_state.artifact_version_idx}",
-                            use_container_width=True,
-                        ):
-                            st.session_state.selected_file = fname
-                            st.rerun()
-
-                with f_col2:
-                    if st.session_state.selected_file:
-                        _ext = st.session_state.selected_file.rsplit(".", 1)[-1].lower()
-                        _lang_map = {
-                            "html": "html", "css": "css", "js": "javascript",
-                            "jsx": "jsx", "json": "json", "py": "python",
-                            "md": "markdown",
-                        }
-                        st.code(
-                            files_dict[st.session_state.selected_file],
-                            language=_lang_map.get(_ext, "text"),
-                        )
-
-            elif st.session_state.artifact_edit_mode:
-                # Modo edicao: substitui o iframe por um textarea.
-                # A key inclui o indice da versao para nao "prender" o
-                # textarea no conteudo de uma versao antiga.
-                _edit_key = f"artifact_edit_area_{st.session_state.artifact_version_idx}"
-                with st.form("artifact_edit_form", clear_on_submit=False):
-                    st.markdown(
-                        '<div style="font-size:11px;font-weight:600;'
-                        'color:#c96442;letter-spacing:.08em;'
-                        'text-transform:uppercase;margin-bottom:6px;">'
-                        'Editando artifact (HTML combinado)'
-                        '</div>',
-                        unsafe_allow_html=True,
-                    )
-                    edited = st.text_area(
-                        "Codigo",
-                        value=st.session_state.current_artifact,
-                        height=IFRAME_HEIGHT - 110,
-                        label_visibility="collapsed",
-                        key=_edit_key,
-                    )
-                    ec1, ec2 = st.columns([1.4, 1])
-                    with ec1:
-                        apply_edit = st.form_submit_button(
-                            "Aplicar", use_container_width=True,
-                        )
-                    with ec2:
-                        cancel_edit = st.form_submit_button(
-                            "Cancelar", use_container_width=True,
-                        )
-                    if apply_edit:
-                        st.session_state.current_artifact = edited
-                        st.session_state.current_files = {"index.html": edited}
-                        if (
-                            st.session_state.artifact_versions
-                            and 0 <= st.session_state.artifact_version_idx
-                            < len(st.session_state.artifact_versions)
-                        ):
-                            _v = st.session_state.artifact_versions[
-                                st.session_state.artifact_version_idx
-                            ]
-                            _v["code"] = edited
-                            _v["files"] = {"index.html": edited}
-                        st.session_state.artifact_edit_mode = False
-                        st.rerun()
-                    if cancel_edit:
-                        st.session_state.artifact_edit_mode = False
-                        st.rerun()
-
-            else:
-                # Comentario invisivel para forcar o navegador a remontar
-                # o iframe de verdade quando "Atualizar" e clicado, ou
-                # quando a versao muda.
-                _cache_bust = (
-                    f"\n<!-- aether-preview-refresh:{st.session_state.refresh_counter}"
-                    f"-v{st.session_state.artifact_version_idx} -->"
-                )
-                components.html(
-                    st.session_state.current_artifact + _cache_bust,
-                    height=IFRAME_HEIGHT,
-                    scrolling=True,
-                )
-
-
-# ============================================================
-# RERUN
-# ============================================================
-if _do_rerun:
-    st.rerun()
