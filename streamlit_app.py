@@ -2022,7 +2022,7 @@ with col_preview:
     has_art = bool(st.session_state.current_artifact)
     total_v = len(st.session_state.get("artifact_versions", []))
     cur_v   = st.session_state.get("artifact_version_idx", -1) + 1 if total_v else 0
-    files_dict = st.session_state.current_files or {}
+    files_dict = st.session_state.get("current_files", {}) or {}
     is_multi_file = len(files_dict) > 1
 
     hdr_l, hdr_toggle, hdr_v, hdr_t, hdr_e, hdr_r = st.columns(
